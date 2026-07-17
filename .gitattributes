@@ -1,0 +1,6 @@
+# Normalize line endings: store LF in the repo so Windows, Linux and the Pi
+# stay consistent (no phantom whole-file diffs across machines).
+* text=auto eol=lf
+
+# Windows PowerShell scripts check out as CRLF.
+*.ps1 text eol=crlf
