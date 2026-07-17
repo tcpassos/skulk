@@ -1,0 +1,16 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2021"
+description = "Async client for the implant control protocol (depends only on the contract)"
+
+[dependencies]
+contract = { path = "../contract" }
+serde_json = "1"
+tokio = { version = "1", features = ["net", "io-util", "macros", "rt"] }
+
+[dev-dependencies]
+engine = { path = "../engine" }
+transport = { path = "../transport" }
+example-sysinfo = { path = "../modules/sysinfo" }
+tokio = { version = "1", features = ["net", "io-util", "macros", "rt", "rt-multi-thread", "time"] }

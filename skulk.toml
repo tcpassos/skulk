@@ -1,0 +1,22 @@
+# skulkd configuration. Every field is optional; the values below are the
+# defaults, so an empty file (or no file at all) behaves identically.
+#
+# NOTE: top-level scalar keys (log, heartbeat_secs) must appear BEFORE any
+# [table] header — that is how TOML works.
+
+# Log filter in RUST_LOG syntax. The RUST_LOG env var overrides this.
+log = "info"
+
+# Liveness heartbeat interval in seconds (0 disables it).
+heartbeat_secs = 30
+
+[implant]
+id = "skulk-dev"
+# hardware = "Raspberry Pi Zero 2 W"   # empty/omitted -> auto-detected as "os/arch"
+
+[transport]
+mode = "listen"          # "listen" (dev / USB-OTG) or "dial" (production reverse tunnel)
+addr = "127.0.0.1:9000"  # bind address (listen) or controller address (dial)
+
+[loot]
+path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKULK_LOOT

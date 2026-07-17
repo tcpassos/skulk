@@ -1,0 +1,12 @@
+[package]
+name = "example-sysinfo"
+version = "0.1.0"
+edition = "2021"
+description = "Reference ImplantModule: reports basic host info (the smallest complete module)"
+
+[dependencies]
+contract = { path = "../../contract" }
+module-sdk = { path = "../../module-sdk" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

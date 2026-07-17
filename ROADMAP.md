@@ -1,0 +1,151 @@
+# Roadmap & Backlog — Skulk (motor de pentest embarcado)
+
+Backlog rastreável do projeto. Fonte de verdade do "o que falta". Marque com `[x]` ao concluir.
+
+- **Status:** `[x]` feito · `[~]` em progresso · `[ ]` pendente
+- **Dificuldade:** `easy` · `medium` · `hard` · `frontier` (greenfield / ponto fino do ecossistema)
+- **Alvo:** Pi Zero 2 W e variantes (aarch64/armv7)
+- **Regra de ouro:** Rust-first · FFI-C só onde o ecossistema é fino · nunca embrulhar motor rival (bettercap etc.)
+- **Referências:** dossiê de mercado completo em `scratchpad/dossier.html`. Âncoras técnicas: **AngryOxide** (wifi nativo), **hudsucker** (MITM HTTPS), **bettercap** (arquitetura), **P4wnP1** (USB gadget).
+
+---
+
+## Fases (ordem de prova de valor)
+
+- **Fase 0 — Fundação** — ✅ feito
+- **Fase 1 — Fechar o loop ao vivo** — socket adapter + loot real + detecção de capability + 1º módulo de recon real
+- **Fase 2 — Identidade no device** — LCD + TUI + ViewManifest + reflexos de sobrevivência
+- **Fase 3 — Amplitude de ataque** — suíte de recon, creds/MITM, wifi (stack AngryOxide)
+- **Fase 4 — Rádio, USB, autonomia offline e módulos de fronteira**
+
+---
+
+## Fase 0 — Fundação (feito)
+
+- [x] Crate `contract` — Envelope/Command/Event/Result/Manifest + capability-gating (5 testes de round-trip)
+- [x] Crate `module-sdk` — trait `ImplantModule`, `ModuleCtx`, `Cancel`, `LootSink`, `ModuleError`, `ParseParams`
+- [x] Crate `engine` — event bus (broadcast), registro de módulos, dispatcher, capability-gating
+- [x] Módulo-exemplo `example-sysinfo` + teste end-to-end do loop (3 testes)
+- [x] Decisões travadas: registro estático · trait object-safe (RawParams + async_trait) · ModuleCtx mínimo
+
+---
+
+## Infra do motor (gaps não-módulo)
+
+### Transporte & controle agnóstico
+- [x] `medium` **Socket adapter / túnel reverso** — crate `transport`: TCP + JSON-lines, modo disca-pra-fora (`run_dialer`, com reconexão) + modo escuta (`run_listener`), egresso filtra `ViewManifest` por padrão, trata `Lagged`. Testado end-to-end (Describe/Invoke sobre TCP real). *Falta: WebSocket/gRPC/QUIC.*
+- [ ] `medium` **Cripto de canal + identidade do device** — mTLS ou Noise + identidade assinada → `rustls`, `snow`, `ed25519-dalek`, `chacha20poly1305`
+- [x] `easy` **Reconexão/backoff do túnel** (`run_dialer`) + **heartbeat** (`Event::Heartbeat` periódico via `Engine::spawn_heartbeat`, intervalo em config)
+- [x] `easy` **Binário `skulkd`** — junta engine + módulos + transporte; config `skulk.toml`. Testado ao vivo: cliente TCP → Describe/Invoke → respostas em streaming.
+
+### Persistência
+- [x] `medium` **Loot store real** (`RedbLoot` em `engine`) — redb single-file ACID via `spawn_blocking`; layout `[kind_byte]++payload`. Testado automatizado (reabertura) E ao vivo (loot sobreviveu a kill+restart do processo). `MemLoot` mantido pra testes. Config de path via `IMPLANT_LOOT`.
+- [x] `easy` **Loot por referência** — `ctx.store_loot` grava bulk no store, wire carrega só `LootStored{key}` + `Loot` query retorna refs. Convenção habilitada.
+
+### Build, config & bootstrap
+- [x] `medium` **Feature-flags por módulo** — deps de módulo opcionais + `#[cfg(feature)]` no skulkd; provado ao vivo (build enxuto = só `net.port_scan`, default = ambos)
+- [x] `medium` **Detecção de capabilities em runtime** — `caps::detect()` (Linux sonda `/sys/class/udc` + bluetooth; vazio em não-Linux) → `Manifest.capabilities`
+- [x] `easy` **Config/bootstrap** — `implant.toml` (TOML, todos os campos com default) + override `IMPLANT_LOOT`; testes de parse do arquivo real
+- [x] `easy` **Logging/tracing** — `tracing` estruturado (engine/transport/skulkd) + `EnvFilter` (`RUST_LOG`/config), saída em stderr
+- [ ] `medium` **Pipeline de cross-compile/deploy** para aarch64/armv7 (Pi Zero 2 W)
+
+### UI / operador
+- [x] `medium` **Lib `client` + CLI `skulk`** — cliente do protocolo (depende só de `contract`): `connect/send/recv/run/watch/describe/loot`. Sintaxe module-first `<module> <action> key=value` com inferência de tipo (+ `--params-json`) e verbos `describe/loot/watch/ping/shutdown`. Teste automatizado + ao vivo.
+- [ ] `medium` **TUI de operador** — via SSH/USB-OTG → `ratatui` + `crossterm`, em cima da lib `client`
+- [ ] `medium` **Renderer LCD** — assina `ViewManifest`, desenha resumo tático → `embedded-graphics`, `mipidsi`/`st7735`, `rppal` (SPI)
+
+### Sobrevivência (reflexos locais, independentes do controlador)
+- [ ] `medium` **Sensor de tamper** (acelerômetro/PIR) → `Alert` → gatilho de wipe → `rppal`/`linux-embedded-hal`, `evdev`, driver do sensor
+- [ ] `easy` **Telemetria de energia** (undervoltage → flush)
+- [x] `easy` **Self-wipe do loot** — `Command::Shutdown{Wipe}` limpa o redb (`LootSink::clear`) e para o daemon via `Notify`; testado. *Falta: `zeroize` de segredos em RAM (na fase de cripto).*
+
+### Autonomia offline (adiado, mas o contrato já reserva)
+- [ ] `hard` **`Mission`** — variante aditiva de `Command`: fila de comandos executada sem o controlador + store-and-forward do loot
+
+---
+
+## Backlog de módulos (do levantamento de mercado)
+
+### Recon (15)
+- [ ] `easy` **host_discovery** — `pnet_datalink` (ARP) + `surge-ping` (ICMP) + `rtnetlink` (cache neigh)
+- [x] `medium` **port_scan** — módulo `net.port_scan` (crate `net-portscan`): connect-scan async `tokio`, params tipados, progresso, cancelamento. Testado ao vivo (achou a própria :9000). *Falta variante SYN half-open (`pnet`).*
+- [ ] `medium` **service_fp** — `tokio`+`rustls`+`hyper` + `russh` + `x509-parser` (+ porte nmap-service-probes)
+- [ ] `medium` **passive_sniff** — `pnet_datalink` (ou `pcap` FFI) + `etherparse` + `pcap-file`
+- [ ] `medium` **mdns_ssdp_llmnr_harvest** — `mdns-sd` + `ssdp-client` + listener `hickory-proto`
+- [ ] `easy` **passive_os_fingerprint** — `huginn-net` (p0f + JA4, reusa a captura)
+- [ ] `easy` **dns_recon** — `hickory-resolver` + `hickory-client` (AXFR)
+- [ ] `medium` **dhcp_recon** — `dhcproto` + `pnet` + tabela Fingerbank option-55
+- [ ] `hard` **wifi_recon** — stack AngryOxide (ver domínio WiFi)
+- [ ] `medium` **ble_recon** — `bluer`/`btleplug`
+- [ ] `medium` **snmp_enum** — `snmp2` (+ `rasn-snmp`)
+- [ ] `medium` **netbios_smb_enum** — `netbios-parser` + `smb`
+- [ ] `easy` **traceroute_topology** — `tracert` / `pnet`+`socket2`
+- [ ] `easy` **upnp_device_enum** — `ssdp-client` + `quick-xml`
+- [ ] `frontier` **os_fingerprint (ativo)** — `pnet`+`socket2` + porte nmap-os-db (sem crate)
+
+### Credenciais & MITM (16)
+- [ ] `hard` **responder_llmnr_nbtns_mdns** — `tokio`+`socket2` multicast + `hickory-proto` + `sspi` (NTLM)
+- [ ] `easy` **arp_spoof** — `pnet_datalink` + `pnet_packet` + `rtnetlink`
+- [ ] `medium` **dns_spoof** — `hickory-server` + `nfq` (NFQUEUE)
+- [ ] `medium` **dhcp_spoof** — `dhcproto` + `socket2`
+- [ ] `hard` **dhcp6_spoof_mitm6** — `dhcproto`(v6) + `socket2` + `hickory-server` → *ver oportunidades*
+- [ ] `medium` **icmp_ra_redirect_spoof** — `pnet_packet` + `socket2`
+- [ ] `frontier` **ntlm_relay** — `sspi` + `smb2`/`ldap3` → *ver oportunidades*
+- [ ] `medium` **wpad_rogue_proxy** — `hyper`/`axum` + `hudsucker` + `sspi`
+- [ ] `medium` **captive_portal / evil_portal** — `axum` + `hickory-server` + `dhcproto` + `rcgen`
+- [ ] `hard` **sslstrip_http_downgrade** — plugin `hudsucker` + `lol_html` + `nfq`
+- [ ] `medium` **https_proxy_intercept** — `hudsucker` (CA por-SNI, HTTP/2, hooks) — *o melhor caminho pronto*
+- [ ] `medium` **http_content_injection** — `hudsucker` + `lol_html`
+- [ ] `medium` **cleartext_credential_sniffer** — `afpacket`/`pcap` + `etherparse` + `regex` + `sspi`
+- [ ] `easy` **tls_mitm_ca** (suporte) — `rcgen` + `rustls` (CA/cache único compartilhado)
+- [ ] `medium` **mitm_substrate_forwarding** (suporte) — `rtnetlink` + `nfq` + `rustables`⚠
+- [ ] `easy` **cam_table_flood** — `pnet_datalink` (baixo rendimento em switch moderno)
+
+### WiFi / 802.11 (6) — stack: `nl80211-ng`+`neli`+`libwifi`+`radiotap` + AF_PACKET (`nix`/`libc`)
+- [ ] `medium` **wifi_recon** — monitor + channel-hop + parse de beacons
+- [ ] `medium` **deauth** — `libwifi` monta frame + radiotap TX manual + AF_PACKET sendto
+- [ ] `hard` **handshake_capture** — captura EAPOL + FSM M1–M4 + `pcap-file` (hc22000)
+- [ ] `hard` **pmkid_capture** — FSM de associação ativa (auth→assoc→EAPOL M1→PMKID KDE)
+- [ ] `frontier` **evil_twin_rogue_ap** — soft-AP KARMA em Rust + `dhcproto`/`hickory`/`axum` → *ver oportunidades*
+- [ ] `frontier` **wpa_wps (pixie-dust)** — detecção `libwifi` + EAP-WSC; crack: FFI `pixiewps` → *ver oportunidades*
+
+### Bluetooth & rádio (7)
+- [ ] `easy` **ble_scan** — `btleplug` + `bluer`
+- [ ] `easy` **ble_enum** (GATT) — `btleplug`/`bluer`
+- [ ] `hard` **bt_classic_recon** — HCI cru (`socket2`+`nix`); FFI `libbluetooth` p/ SDP
+- [ ] `hard` **hid_over_2.4ghz (MouseJack)** — `rusb`/`nusb` portando RFStorm do `bettercap/nrf24`
+- [ ] `hard` **subghz_recon** — `soapysdr` (FFI) / `rtl-sdr-rs` / `cc1101` (spidev)
+- [ ] `medium` **ble_spoof_hid_inject** — `bluer` (LEAdvertisement + GATT server) / `bluster`
+- [ ] `frontier` **ble_sniff_follow** — `serialport` c/ firmware Sniffle (nRF52840)
+
+### Exfil & transporte C2 (do conhecimento — confirmar crates)
+- [ ] `medium` **reverse_tunnel** — (ver Infra › Transporte)
+- [ ] `hard` **dns_tunnel** — `hickory-proto` + encoder de chunking próprio (sem lib Rust madura)
+- [ ] `easy` **https_beacon** — `reqwest`+`rustls` (domain fronting)
+- [ ] `easy` **icmp_tunnel** — `pnet`/`socket2`
+- [ ] `easy` **webhook_exfil** (Discord/Telegram) — `reqwest`
+
+### USB / acesso físico (do conhecimento — mais OS-facility que crate)
+- [ ] `medium` **usb_ethernet_gadget** — configfs `libcomposite` ecm/rndis → roda recon/responder sobre usb0
+- [ ] `medium` **usb_hid_inject (BadUSB)** — HID gadget `/dev/hidgN` + parser DuckyScript
+- [ ] `easy` **usb_mass_storage** — `f_mass_storage` (exfil/autorun)
+- [ ] `easy` **duckyscript_parser** (suporte, compartilhado com mousejack)
+
+---
+
+## Oportunidades de contribuição original (pontos finos do ecossistema)
+
+Onde o Rust não tem equivalente pronto — valor alto, diferencial do projeto:
+
+- [ ] **ntlm_relay** — não existe um `ntlmrelayx` em Rust
+- [ ] **mitm6 em Rust** — todos os blocos existem (`dhcproto`+`socket2`+`hickory-server`+`sspi`), ninguém montou
+- [ ] **evil_twin soft-AP** — beacon/probe-response KARMA em Rust puro (greenfield mas viável)
+- [ ] **wpa_wps pixie-dust** — reimplementar Pixie-Dust em `RustCrypto` (hoje só C via `pixiewps`)
+
+---
+
+## Confirmar antes de depender (crates marcados "unverified" na pesquisa)
+
+- [ ] `rustables` (programação nftables) — checar API/manutenção atual
+- [ ] `rupnp` (SOAP UPnP) · `mac_oui`/`oui` · `gattrs` · `bluetooth-serial-port`
+- [ ] `afpacket` TPACKET_V3 ring · matcher `nmap-os-db`/`nmap-service-probes` (portar você mesmo)

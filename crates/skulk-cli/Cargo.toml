@@ -1,0 +1,17 @@
+[package]
+name = "skulk-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Skulk command-line controller (module-first syntax over the socket protocol)"
+
+# Package is 'skulk-cli' (the crates.io name 'skulk' is taken by an unrelated
+# crate); the binary you actually run is 'skulk'.
+[[bin]]
+name = "skulk"
+path = "src/main.rs"
+
+[dependencies]
+contract = { path = "../contract" }
+client = { path = "../client" }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

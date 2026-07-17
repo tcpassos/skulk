@@ -1,0 +1,9 @@
+# Rust build output
+/target
+
+# redb loot stores (runtime data)
+*.redb
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db

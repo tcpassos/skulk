@@ -1,0 +1,16 @@
+[package]
+name = "transport"
+version = "0.1.0"
+edition = "2021"
+description = "Socket adapter: thin JSON-line translator between a byte stream and the engine"
+
+[dependencies]
+contract = { path = "../contract" }
+engine = { path = "../engine" }
+serde_json = "1"
+tracing = "0.1"
+tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "macros"] }
+
+[dev-dependencies]
+example-sysinfo = { path = "../modules/sysinfo" }
+tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "rt-multi-thread", "macros"] }

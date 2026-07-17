@@ -1,0 +1,24 @@
+[package]
+name = "skulkd"
+version = "0.1.0"
+edition = "2021"
+description = "The Skulk implant daemon: engine + modules + transport in one runnable process"
+
+[features]
+# Each module is opt-in, so a deployed firmware can be built with only what a
+# given drop needs (smaller binary, less RAM). Default includes everything.
+default = ["mod-sysinfo", "mod-portscan"]
+mod-sysinfo = ["dep:example-sysinfo"]
+mod-portscan = ["dep:net-portscan"]
+
+[dependencies]
+contract = { path = "../contract" }
+engine = { path = "../engine" }
+transport = { path = "../transport" }
+example-sysinfo = { path = "../modules/sysinfo", optional = true }
+net-portscan = { path = "../modules/portscan", optional = true }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
