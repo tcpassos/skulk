@@ -23,7 +23,9 @@ pub use envelope::{Body, Envelope};
 pub use error::{ErrorCode, ProtocolError};
 pub use event::{Event, LogLevel, Severity, ViewLine, ViewManifest};
 pub use ids::{MessageId, ModuleId, TaskId};
-pub use manifest::{ActionSpec, Capability, ImplantInfo, Manifest, ModuleDescriptor};
+pub use manifest::{
+    ActionSpec, Capability, ImplantInfo, Manifest, ModuleDescriptor, ParamSpec, Tactic,
+};
 pub use response::{Ack, TaskResult, TaskStatus};
 
 /// Protocol version, carried in every [`Envelope`] for capability negotiation.

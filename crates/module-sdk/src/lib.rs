@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use contract::{
@@ -201,4 +201,47 @@ impl ParseParams for RawParams {
 /// Build [`RawParams`] from a serializable output.
 pub fn raw_params<T: Serialize>(value: &T) -> Result<RawParams, ModuleError> {
     Ok(RawParams(serde_json::to_value(value).map_err(ModuleError::from)?))
+}
+
+/// A flexible port specification a network module can accept as a parameter: a
+/// spec string (`"1-1024"`, `"22,80,443"`, `"80,1000-1010"`), an explicit array
+/// (`[22, 80, 443]`), or a single number (`80`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum PortSpec {
+    Spec(String),
+    List(Vec<u16>),
+    One(u16),
+}
+
+impl PortSpec {
+    /// Expand into a sorted, de-duplicated list of ports.
+    pub fn resolve(&self) -> Result<Vec<u16>, ModuleError> {
+        let mut set = std::collections::BTreeSet::new();
+        match self {
+            PortSpec::One(p) => {
+                set.insert(*p);
+            }
+            PortSpec::List(v) => set.extend(v.iter().copied()),
+            PortSpec::Spec(spec) => {
+                for part in spec.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+                    if let Some((a, b)) = part.split_once('-') {
+                        let lo = parse_port(a)?;
+                        let hi = parse_port(b)?;
+                        let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+                        set.extend(lo..=hi);
+                    } else {
+                        set.insert(parse_port(part)?);
+                    }
+                }
+            }
+        }
+        Ok(set.into_iter().collect())
+    }
+}
+
+fn parse_port(s: &str) -> Result<u16, ModuleError> {
+    s.trim()
+        .parse()
+        .map_err(|_| ModuleError::InvalidParams(format!("bad port '{}'", s.trim())))
 }

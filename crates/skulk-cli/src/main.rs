@@ -116,13 +116,30 @@ async fn describe(client: &mut Client) -> Result<(), String> {
     println!("capabilities: {caps}");
     println!("modules:");
     for md in &m.modules {
-        let actions: Vec<&str> = md.actions.iter().map(|a| a.name.as_str()).collect();
         let requires = if md.requires.is_empty() {
             String::new()
         } else {
             format!("  requires {:?}", md.requires)
         };
-        println!("  {} v{}  [{}]{}", md.id, md.version, actions.join(", "), requires);
+        let tactic = md.tactic.as_ref().map(|t| format!("  [{t:?}]")).unwrap_or_default();
+        println!("  {} v{}{}{}", md.id, md.version, tactic, requires);
+        for a in &md.actions {
+            let desc = a.description.as_deref().unwrap_or("");
+            println!("    {}  -  {}", a.name, desc);
+            for p in &a.params {
+                let req = if p.required { "*" } else { " " };
+                let ty = p.type_hint.as_deref().unwrap_or("");
+                let d = p.description.as_deref().unwrap_or("");
+                let mut extra = String::new();
+                if let Some(dv) = &p.default {
+                    extra.push_str(&format!("  [default: {dv}]"));
+                }
+                if let Some(ex) = &p.example {
+                    extra.push_str(&format!("  [e.g. {ex}]"));
+                }
+                println!("      {req} {:<12} {:<9} {}{}", p.name, ty, d, extra);
+            }
+        }
     }
     Ok(())
 }

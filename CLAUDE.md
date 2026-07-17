@@ -25,7 +25,7 @@ client        async client library (Client: connect/send/recv/run/
 skulk-cli     the `skulk` CLI (binary named `skulk`).                    deps: client, contract
 skulkd        the daemon binary: engine + modules + transport.          deps: engine, transport, modules
 crates/modules/*   attack/recon modules. e.g. example-sysinfo -> sys.info,
-                   net-portscan -> net.port_scan.                        deps: module-sdk, contract
+                   net-portscan -> net.ports, net-services -> net.services. deps: module-sdk, contract
 ```
 
 **Rule:** modules never depend on `engine`; they depend on `module-sdk` + `contract`.
@@ -70,6 +70,24 @@ On Windows, `scripts/demo.ps1` runs an end-to-end tour (starts skulkd, drives it
   `Event` / `ViewManifest` (live views). `ActionSpec.params_schema` (JSON Schema)
   drives rich forms when a module provides one; otherwise a generic key=value
   editor. Extensibility is data-driven, not code-driven.
+
+## Module taxonomy (convention)
+
+Two orthogonal axes (approved with the user), following industry practice:
+
+- **ID = `<domain>.<subject>`, invoked with a `<verb>` action** — protocol/service
+  first, like metasploit/nmap/bettercap. `domain` = `net`/`dns`/`http`/`tls`/`smb`/
+  `ssh`/`snmp`/`ftp`/`arp`/`dhcp`/`wifi`/`ble`/`usb`/`sys`… The TUI groups by the
+  dotted namespace. Standard verbs: `discover`/`scan`/`detect`/`enum`/`sniff`/
+  `capture`/`spoof`/`poison`/`relay`/`brute`/`inject`. Examples: `net.hosts discover`,
+  `net.ports scan`, `net.services detect`, `dns.records enum`, `arp.cache spoof`.
+- **`ModuleDescriptor.tactic`** = the MITRE ATT&CK tactic (`Discovery`,
+  `CredentialAccess`, `LateralMovement`, `Collection`, `Exfiltration`, …) — the
+  kill-chain "phase", orthogonal to the id, for grouping/filtering by phase.
+
+Each action declares its params via `ActionSpec.params: Vec<ParamSpec>`.
+Network modules take a `PortSpec` param (from `module-sdk`) for `ports`
+(`"1-1024"` / `"22,80,443"` / `[22,80]` / `80`).
 
 ## Adding a module
 

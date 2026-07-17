@@ -18,6 +18,8 @@ use engine::{Engine, RedbLoot};
 use example_sysinfo::SysInfo;
 #[cfg(feature = "mod-portscan")]
 use net_portscan::PortScan;
+#[cfg(feature = "mod-services")]
+use net_services::Services;
 use transport::{run_dialer, run_listener, TransportConfig};
 
 use config::{Config, Mode};
@@ -65,6 +67,8 @@ async fn main() {
     engine.register(Arc::new(SysInfo));
     #[cfg(feature = "mod-portscan")]
     engine.register(Arc::new(PortScan));
+    #[cfg(feature = "mod-services")]
+    engine.register(Arc::new(Services));
     let engine = Arc::new(engine);
 
     if config.heartbeat_secs > 0 {

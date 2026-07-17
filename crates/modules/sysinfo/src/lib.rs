@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use contract::{ActionSpec, LogLevel, LootKind, ModuleDescriptor, ModuleId, RawParams};
+use contract::{ActionSpec, LogLevel, LootKind, ModuleDescriptor, ModuleId, ParamSpec, RawParams};
 use module_sdk::{raw_params, ImplantModule, ModuleCtx, ModuleError, ParseParams};
 
 pub struct SysInfo;
@@ -34,9 +34,13 @@ impl ImplantModule for SysInfo {
         ModuleDescriptor {
             id: ModuleId::from("sys.info"),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            tactic: None, // a utility, not an ATT&CK technique
             actions: vec![ActionSpec {
                 name: "get".to_string(),
                 description: Some("Report basic host info".to_string()),
+                params: vec![
+                    ParamSpec::optional("verbose", "bool", "include extra detail").with_default("false"),
+                ],
                 params_schema: None,
             }],
             requires: Vec::new(), // needs no special hardware

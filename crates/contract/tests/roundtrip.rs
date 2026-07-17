@@ -72,9 +72,11 @@ fn manifest_carries_capability_gating() {
         modules: vec![ModuleDescriptor {
             id: ModuleId::from("wifi.deauth"),
             version: "0.1.0".into(),
+            tactic: Some(Tactic::CredentialAccess),
             actions: vec![ActionSpec {
                 name: "start".into(),
                 description: Some("Inject deauth frames".into()),
+                params: vec![ParamSpec::required("bssid", "mac", "target access point")],
                 params_schema: None,
             }],
             requires: vec![Capability::MonitorMode, Capability::PacketInjection],

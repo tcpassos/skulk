@@ -51,7 +51,8 @@ Backlog rastreável do projeto. Fonte de verdade do "o que falta". Marque com `[
 
 ### UI / operador
 - [x] `medium` **Lib `client` + CLI `skulk`** — cliente do protocolo (depende só de `contract`): `connect/send/recv/run/watch/describe/loot`. Sintaxe module-first `<module> <action> key=value` com inferência de tipo (+ `--params-json`) e verbos `describe/loot/watch/ping/shutdown`. Teste automatizado + ao vivo.
-- [ ] `medium` **TUI de operador** — via SSH/USB-OTG → `ratatui` + `crossterm`, em cima da lib `client`
+- [~] `medium` **TUI de operador** (`skulk-tui`) — dashboard `ratatui`+`crossterm` sobre a lib `client`. FEITO: árvore de módulos do Manifest (agrupada por namespace, disponibilidade por capability), painéis Events/Tasks/Loot ao vivo, linha de comando module-first, painel **DETAIL** com o help dos params (do `ParamSpec`), Enter pré-preenche os params obrigatórios. Client ganhou `split()`. Falta: formulário editável campo-a-campo, config local do operador (favoritos/recipes/keybindings), painel de ViewManifest.
+- [x] `easy` **Params auto-descritos** — `ActionSpec.params: Vec<ParamSpec>` no contrato (nome/tipo/obrigatório/default/exemplo); módulos declaram; `skulk describe` e a TUI mostram o help. `net.port_scan` aceita `ports` flexível e `timeout_ms`.
 - [ ] `medium` **Renderer LCD** — assina `ViewManifest`, desenha resumo tático → `embedded-graphics`, `mipidsi`/`st7735`, `rppal` (SPI)
 
 ### Sobrevivência (reflexos locais, independentes do controlador)
@@ -67,9 +68,9 @@ Backlog rastreável do projeto. Fonte de verdade do "o que falta". Marque com `[
 ## Backlog de módulos (do levantamento de mercado)
 
 ### Recon (15)
-- [ ] `easy` **host_discovery** — `pnet_datalink` (ARP) + `surge-ping` (ICMP) + `rtnetlink` (cache neigh)
-- [x] `medium` **port_scan** — módulo `net.port_scan` (crate `net-portscan`): connect-scan async `tokio`, params tipados, progresso, cancelamento. Testado ao vivo (achou a própria :9000). *Falta variante SYN half-open (`pnet`).*
-- [ ] `medium` **service_fp** — `tokio`+`rustls`+`hyper` + `russh` + `x509-parser` (+ porte nmap-service-probes)
+- [ ] `easy` **`net.hosts` discover** (host_discovery) — `pnet_datalink` (ARP) + `surge-ping` (ICMP) + `rtnetlink`. Requer `Capability::RawSocket` (a criar) — roda no Pi.
+- [x] `medium` **`net.ports` scan** (port_scan) — connect-scan async `tokio`, `PortSpec` flexível, progresso, cancelamento. Testado ao vivo. *Falta variante SYN half-open (`pnet`).*
+- [x] `medium` **`net.services` detect** (service_fp) — detecção de serviço via banner + probe HTTP, nativo `tokio`, tática Discovery. Testado (fake SSH/HTTP no loopback). *Falta: TLS/cert fingerprint (`rustls`+`x509-parser`) e porte de assinaturas nmap-service-probes.*
 - [ ] `medium` **passive_sniff** — `pnet_datalink` (ou `pcap` FFI) + `etherparse` + `pcap-file`
 - [ ] `medium` **mdns_ssdp_llmnr_harvest** — `mdns-sd` + `ssdp-client` + listener `hickory-proto`
 - [ ] `easy` **passive_os_fingerprint** — `huginn-net` (p0f + JA4, reusa a captura)

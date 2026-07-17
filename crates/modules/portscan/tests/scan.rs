@@ -33,11 +33,11 @@ async fn scan_finds_an_open_port() {
     let params = serde_json::json!({
         "target": "127.0.0.1",
         "ports": [open_port, open_port.wrapping_sub(1)],
-        "connect_timeout_ms": 300
+        "timeout_ms": 300
     });
     let invoke = Envelope::new(
         Body::Command(Command::Invoke(Invoke {
-            module: ModuleId::from("net.port_scan"),
+            module: ModuleId::from("net.ports"),
             action: "scan".to_string(),
             params: RawParams(params),
             timeout_ms: None,

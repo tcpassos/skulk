@@ -37,6 +37,7 @@ impl ImplantModule for NeedsMonitor {
         ModuleDescriptor {
             id: ModuleId::from("wifi.stub"),
             version: "0.0.0".to_string(),
+            tactic: None,
             actions: Vec::new(),
             requires: vec![Capability::MonitorMode],
         }

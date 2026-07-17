@@ -109,6 +109,51 @@ impl Client {
     }
 }
 
+impl Client {
+    /// Split into an independent [`Sender`] and [`Receiver`] over the one
+    /// connection, for a UI that sends commands while continuously consuming the
+    /// event stream.
+    pub fn split(self) -> (Sender, Receiver) {
+        (Sender { writer: self.writer }, Receiver { reader: self.reader })
+    }
+}
+
+/// The write half of a split [`Client`].
+pub struct Sender {
+    writer: OwnedWriteHalf,
+}
+
+/// The read half of a split [`Client`].
+pub struct Receiver {
+    reader: tokio::io::Lines<BufReader<OwnedReadHalf>>,
+}
+
+impl Sender {
+    /// Send a command; returns the message id for correlating the responses.
+    pub async fn send(&mut self, command: Command) -> io::Result<MessageId> {
+        let env = Envelope::new(Body::Command(command), 0);
+        let id = env.id;
+        let mut buf = serde_json::to_vec(&env).map_err(to_io)?;
+        buf.push(b'\n');
+        self.writer.write_all(&buf).await?;
+        self.writer.flush().await?;
+        Ok(id)
+    }
+}
+
+impl Receiver {
+    /// Read the next envelope, or `None` if the peer closed.
+    pub async fn recv(&mut self) -> io::Result<Option<Envelope>> {
+        loop {
+            match self.reader.next_line().await? {
+                None => return Ok(None),
+                Some(line) if line.trim().is_empty() => continue,
+                Some(line) => return serde_json::from_str(&line).map(Some).map_err(to_io),
+            }
+        }
+    }
+}
+
 fn to_io<E: std::fmt::Display>(e: E) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e.to_string())
 }

@@ -38,7 +38,7 @@ transport     socket adapter (TCP + JSON-lines, listen / reverse-dial)
 client        async client library for the protocol
 skulk-cli     the `skulk` command-line controller
 skulkd        the daemon: engine + modules + transport in one process
-modules/*     attack/recon modules (sys.info, net.port_scan, ...)
+modules/*     attack/recon modules (sys.info, net.ports, net.services, ...)
 ```
 
 ## Quickstart
@@ -57,17 +57,20 @@ cargo run -p skulkd          # or: target/debug/skulkd
 Drive it from another terminal with the `skulk` CLI — **module-first** syntax:
 
 ```sh
-skulk describe                                    # what can this implant do?
+skulk describe                                        # what can this implant do?
 skulk sys.info get
-skulk net.port_scan scan target=10.0.0.1 ports=[1,1024] timeout=200
+skulk net.ports scan target=10.0.0.1 ports=1-1024
+skulk net.services detect target=10.0.0.1 ports=22,80,443
 skulk loot
-skulk watch                                       # stream events live
+skulk watch                                           # stream events live
 ```
 
-Params infer their type (`ports=[1,1024]` is a list, `timeout=200` a number,
-`target=10.0.0.1` a string); `--params-json '{...}'` is the escape hatch.
-Bare words without a dot (`describe`, `loot`, `watch`, `ping`, `shutdown`) are
-device-level operations; anything with a dot is a module invocation.
+Module ids follow `<domain>.<subject> <verb>` (protocol-based, like nmap /
+metasploit / bettercap); each module also declares a MITRE ATT&CK `tactic`.
+Params infer their type (`timeout_ms=200` a number, `target=10.0.0.1` a string);
+`--params-json '{...}'` is the escape hatch. Bare words without a dot
+(`describe`, `loot`, `watch`, `ping`, `shutdown`) are device-level operations;
+anything with a dot is a module invocation.
 
 On Windows, `scripts/demo.ps1` starts the daemon and runs a scripted tour.
 

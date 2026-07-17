@@ -7,9 +7,10 @@ description = "The Skulk implant daemon: engine + modules + transport in one run
 [features]
 # Each module is opt-in, so a deployed firmware can be built with only what a
 # given drop needs (smaller binary, less RAM). Default includes everything.
-default = ["mod-sysinfo", "mod-portscan"]
+default = ["mod-sysinfo", "mod-portscan", "mod-services"]
 mod-sysinfo = ["dep:example-sysinfo"]
 mod-portscan = ["dep:net-portscan"]
+mod-services = ["dep:net-services"]
 
 [dependencies]
 contract = { path = "../contract" }
@@ -17,6 +18,7 @@ engine = { path = "../engine" }
 transport = { path = "../transport" }
 example-sysinfo = { path = "../modules/sysinfo", optional = true }
 net-portscan = { path = "../modules/portscan", optional = true }
+net-services = { path = "../modules/services", optional = true }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tracing = "0.1"

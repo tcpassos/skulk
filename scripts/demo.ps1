@@ -32,8 +32,10 @@ function Show($label, $cmdArgs) {
 try {
     Show 'describe' @('describe')
     Show 'sys.info get' @('sys.info', 'get')
-    Show 'net.port_scan scan target=127.0.0.1 port_range=[8990,9010] timeout=200' `
-        @('net.port_scan', 'scan', 'target=127.0.0.1', 'port_range=[8990,9010]', 'timeout=200')
+    Show 'net.ports scan target=127.0.0.1 ports=8990-9010 timeout_ms=200' `
+        @('net.ports', 'scan', 'target=127.0.0.1', 'ports=8990-9010', 'timeout_ms=200')
+    Show 'net.services detect target=127.0.0.1 ports=9000' `
+        @('net.services', 'detect', 'target=127.0.0.1', 'ports=9000')
     Show 'loot' @('loot')
 }
 finally {

@@ -7,7 +7,9 @@ members = [
     "crates/transport",
     "crates/client",
     "crates/skulk-cli",
+    "crates/skulk-tui",
     "crates/skulkd",
     "crates/modules/sysinfo",
     "crates/modules/portscan",
+    "crates/modules/services",
 ]
