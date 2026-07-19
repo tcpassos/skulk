@@ -36,9 +36,8 @@ pub struct Config {
     pub rst_gpio: u8,
     pub bl_gpio: u8,
     /// Panel subpixel order. `mipidsi` defaults to RGB; several common small
-    /// boards (e.g. the Waveshare 1.44" LCD HAT / ST7735S, confirmed against
-    /// a working RaspyJack install's own MADCTL init) actually need BGR, or
-    /// colors come out swapped.
+    /// boards (e.g. the Waveshare 1.44" LCD HAT / ST7735S) actually need
+    /// BGR, or colors come out swapped.
     pub bgr: bool,
 }
 
@@ -50,8 +49,8 @@ pub fn open_st7789(config: &Config) -> Result<MipidsiDisplay<ST7789>, String> {
     open(config, ST7789)
 }
 
-/// Waveshare's 1.44" LCD HAT (ST7735S) — e.g. the display already wired up
-/// by RaspyJack on a shared Pi; same pin conventions, different chip.
+/// Waveshare's 1.44" LCD HAT — same pin conventions as the 1.14" module,
+/// different chip.
 pub fn open_st7735s(config: &Config) -> Result<MipidsiDisplay<ST7735s>, String> {
     open(config, ST7735s)
 }
@@ -72,8 +71,9 @@ where
         1 => SlaveSelect::Ss1,
         other => return Err(format!("unsupported spi_cs {other}, expected 0 or 1")),
     };
-    // 9 MHz matches RaspyJack's proven-working LCD_Config.py for this exact
-    // pin layout; safer starting point than guessing a faster clock.
+    // 9 MHz: a conservative starting clock for ST7735S/ST7789 over a short
+    // ribbon. Raise it once the picture is confirmed stable; lower it first
+    // if pixels come out garbled.
     let spi = Spi::new(bus, slave_select, 9_000_000, Mode::Mode0)
         .map_err(|e| format!("cannot open SPI bus {}: {e}", config.spi_bus))?;
     let spi_device = SimpleHalSpiDevice::new(spi);
