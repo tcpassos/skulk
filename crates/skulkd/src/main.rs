@@ -163,6 +163,7 @@ fn spawn_lcd(engine: &Arc<Engine>, disp: &config::DisplaySection, nav: &HashMap<
         height,
         offset_x,
         offset_y,
+        rotation: disp.rotation,
         spi_bus: disp.spi_bus,
         spi_cs: disp.spi_cs,
         dc_gpio: disp.dc_gpio,
@@ -211,10 +212,15 @@ fn build_input(peripherals: &[contract::Peripheral]) -> Box<dyn lcd_render::Inpu
         .filter_map(|p| p.gpio.first().map(|&gpio| lcd_render::ButtonConfig { name: p.name.clone(), gpio }))
         .collect();
     if buttons.is_empty() {
+        tracing::info!("lcd: no button peripherals configured -- menu stays unreachable, tactical view only");
         return Box::new(lcd_render::NoInput);
     }
+    let names: Vec<&str> = buttons.iter().map(|b| b.name.as_str()).collect();
     match lcd_render::GpioButtons::open(&buttons) {
-        Ok(gpio) => Box::new(gpio),
+        Ok(gpio) => {
+            tracing::info!(?names, "lcd: button input armed");
+            Box::new(gpio)
+        }
         Err(e) => {
             tracing::error!("lcd: cannot open buttons: {e}");
             Box::new(lcd_render::NoInput)

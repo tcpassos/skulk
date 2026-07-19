@@ -12,7 +12,7 @@ use std::time::Duration;
 use embedded_hal::delay::DelayNs;
 use mipidsi::interface::SpiInterface;
 use mipidsi::models::{Model, ST7735s, ST7789};
-use mipidsi::options::ColorOrder;
+use mipidsi::options::{ColorOrder, Orientation, Rotation};
 use mipidsi::{Builder, Display};
 use rppal::gpio::{Gpio, OutputPin};
 use rppal::spi::{Bus, Mode, SimpleHalSpiDevice, SlaveSelect, Spi};
@@ -26,10 +26,15 @@ pub struct Config {
     pub height: u16,
     /// Offset of the visible panel within the controller's larger
     /// addressable framebuffer — most small MIPI-DCS boards need a nonzero
-    /// offset or the image is shifted/cropped. Start at (0, 0) and adjust
-    /// against the real display if the picture looks off.
+    /// offset or the picture is shifted, clipping one edge while the
+    /// opposite edge shows stray pixels from outside the written window.
+    /// Start at (0, 0) and nudge against the real display if so; `mipidsi`
+    /// re-derives the effective offset from `rotation` automatically, so
+    /// the same values keep working across every rotation.
     pub offset_x: u16,
     pub offset_y: u16,
+    /// Clockwise rotation in degrees: 0, 90, 180, or 270.
+    pub rotation: u16,
     pub spi_bus: u8,
     pub spi_cs: u8,
     pub dc_gpio: u8,
@@ -71,6 +76,13 @@ where
         1 => SlaveSelect::Ss1,
         other => return Err(format!("unsupported spi_cs {other}, expected 0 or 1")),
     };
+    let rotation = match config.rotation {
+        0 => Rotation::Deg0,
+        90 => Rotation::Deg90,
+        180 => Rotation::Deg180,
+        270 => Rotation::Deg270,
+        other => return Err(format!("unsupported rotation {other}, expected 0, 90, 180, or 270")),
+    };
     // 9 MHz: a conservative starting clock for ST7735S/ST7789 over a short
     // ribbon. Raise it once the picture is confirmed stable; lower it first
     // if pixels come out garbled.
@@ -107,6 +119,7 @@ where
         .reset_pin(rst)
         .display_size(config.width, config.height)
         .display_offset(config.offset_x, config.offset_y)
+        .orientation(Orientation::new().rotate(rotation))
         .color_order(color_order)
         .init(&mut delay)
         .map_err(|e| format!("display init failed: {e:?}"))?;

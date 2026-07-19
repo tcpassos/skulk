@@ -243,13 +243,19 @@ pub async fn run_app<D>(
             event = input.next_event() => {
                 match event {
                     Some(InputEvent::Pressed(peripheral)) => {
-                        if let Some(action) = nav.resolve(&peripheral) {
-                            if let Some(cmd) = app.apply_nav(action) {
-                                engine.handle(menu::envelope(cmd)).await;
+                        match nav.resolve(&peripheral) {
+                            Some(action) => {
+                                if let Some(cmd) = app.apply_nav(action) {
+                                    engine.handle(menu::envelope(cmd)).await;
+                                }
+                                if renderer.draw_app(&mut target, &app).is_err() {
+                                    tracing::warn!("lcd-render: draw failed");
+                                }
                             }
-                            if renderer.draw_app(&mut target, &app).is_err() {
-                                tracing::warn!("lcd-render: draw failed");
-                            }
+                            None => tracing::info!(
+                                peripheral,
+                                "lcd: button press seen but has no [nav] binding"
+                            ),
                         }
                     }
                     Some(_) => {} // Released/Rotated: no menu behaviour defined yet

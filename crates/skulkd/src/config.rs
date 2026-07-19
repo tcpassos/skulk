@@ -114,9 +114,12 @@ pub struct DisplaySection {
     /// Offset of the visible panel within the controller's addressable
     /// framebuffer — most small SPI TFTs (including the Waveshare 1.14"
     /// this was built against) need a nonzero value or the image is
-    /// shifted/cropped. Start at 0 and adjust against the real hardware.
+    /// shifted/cropped. Start at 0 and adjust against the real hardware;
+    /// the same values keep working regardless of `rotation` below.
     pub offset_x: u32,
     pub offset_y: u32,
+    /// Clockwise rotation in degrees: 0 (default), 90, 180, or 270.
+    pub rotation: u16,
     pub interface: DisplayInterface,
     /// SPI bus/chip-select index (maps to rppal's `Bus`/`SlaveSelect`).
     pub spi_bus: u8,
@@ -140,6 +143,7 @@ impl Default for DisplaySection {
             height: 0,
             offset_x: 0,
             offset_y: 0,
+            rotation: 0,
             interface: DisplayInterface::Spi,
             spi_bus: 0,
             spi_cs: 0,
@@ -234,6 +238,7 @@ mod tests {
             height = 135
             offset_x = 40
             offset_y = 53
+            rotation = 180
             interface = "spi"
             spi_bus = 0
             spi_cs = 0
@@ -262,6 +267,7 @@ mod tests {
         assert_eq!(cfg.display.height, 135);
         assert_eq!(cfg.display.offset_x, 40);
         assert_eq!(cfg.display.offset_y, 53);
+        assert_eq!(cfg.display.rotation, 180);
         assert_eq!(cfg.display.interface, DisplayInterface::Spi);
         assert_eq!(cfg.display.bl_gpio, 24);
         assert!(cfg.display.bgr);

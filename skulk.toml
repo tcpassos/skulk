@@ -31,7 +31,12 @@ path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKUL
 # width = 128
 # height = 128
 # offset_x = 0   # panel offset within the controller's framebuffer -- these
-# offset_y = 0   # small SPI TFTs often need one; calibrate against real hardware
+# offset_y = 0   # small SPI TFTs often need one; calibrate against real hardware.
+                 # Symptom of a wrong offset: content clipped on one edge,
+                 # a line of stray/garbage pixels on the opposite edge. The
+                 # same values keep working across every `rotation` below.
+# rotation = 0   # clockwise degrees: 0, 90, 180, or 270 -- e.g. flip 180 if
+                 # a physical button ends up on the wrong edge for its label
 # interface = "spi"
 # spi_bus = 0
 # spi_cs = 0
