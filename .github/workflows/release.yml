@@ -1,0 +1,62 @@
+name: Release
+
+# Manual only, on purpose: the project moves fast enough right now that a
+# build on every push would just be noise on the releases page. Run it from
+# the Actions tab (or `gh workflow run release.yml`) whenever a fresh binary
+# is actually wanted.
+on:
+  workflow_dispatch:
+    inputs:
+      features:
+        description: "skulkd feature flags to build with (comma-separated)"
+        required: false
+        default: "lcd"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        # One entry per target device architecture; each gets its own
+        # standing "latest-<target>" release below, so the Pi always has a
+        # stable download URL for its own arch regardless of what other
+        # targets are built. Add a line here (e.g.
+        # aarch64-unknown-linux-gnu, for a 64-bit Pi OS) when a second
+        # architecture needs covering -- confirm the real target first with
+        # `uname -m` on the device, the way armv7l (not aarch64) turned out
+        # to be this project's actual Pi Zero 2 W.
+        target:
+          - armv7-unknown-linux-gnueabihf
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build skulkd
+        run: cross build --release --target ${{ matrix.target }} -p skulkd --features "${{ inputs.features }}"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          dist="skulkd-${{ matrix.target }}"
+          mkdir -p "$dist"
+          cp "target/${{ matrix.target }}/release/skulkd" "$dist/"
+          cp skulk.toml "$dist/"
+          tar -czf "$dist.tar.gz" "$dist"
+
+      - name: Publish the rolling latest-${{ matrix.target }} release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="latest-${{ matrix.target }}"
+          gh release delete "$tag" --yes --cleanup-tag --repo "${{ github.repository }}" || true
+          gh release create "$tag" "skulkd-${{ matrix.target }}.tar.gz" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "skulkd - ${{ matrix.target }} (latest)" \
+            --notes "Automated build from commit ${{ github.sha }}. Features: ${{ inputs.features }}."

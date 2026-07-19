@@ -56,6 +56,13 @@ cross build --target armv7-unknown-linux-gnueabihf -p skulkd --features lcd
 ```
 On Windows, `scripts/demo.ps1` runs an end-to-end tour (starts skulkd, drives it via `skulk`).
 
+`.github/workflows/release.yml` runs that same cross-build in CI, manually
+(`workflow_dispatch`, so it doesn't fire on every push) — one matrix entry per
+target architecture, each publishing/overwriting its own standing
+`latest-<target>` GitHub release (a tarball with the release binary +
+`skulk.toml`), so the Pi always has one stable URL to pull the newest build
+from for its own arch. Add a target by adding a matrix line.
+
 ## Locked-in decisions (do not re-litigate)
 
 - **The protocol (`contract`) is the boundary.** Same types on the wire and the
