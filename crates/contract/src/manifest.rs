@@ -12,6 +12,12 @@ pub struct Manifest {
     pub modules: Vec<ModuleDescriptor>,
     /// Everything the hardware currently offers.
     pub capabilities: Vec<Capability>,
+    /// Physical input/output peripherals wired to the device (buttons,
+    /// indicators, rotary encoders) — lets a remote controller know what
+    /// physical I/O this specific unit has, e.g. for the on-device LCD's
+    /// navigation. Empty on units with no such peripherals.
+    #[serde(default)]
+    pub peripherals: Vec<Peripheral>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -138,5 +144,30 @@ pub enum Capability {
     MassStorage,
     Accelerometer,
     Display,
+    Other(String),
+}
+
+/// A physical input/output peripheral wired to the device — a button, an
+/// indicator (LED), or a rotary encoder. Distinct from [`Capability`]: a
+/// capability is a coarse yes/no signal used for module gating, while a
+/// peripheral carries the actual wiring topology (name + GPIO pin(s)) so a
+/// renderer (the on-device LCD, chiefly) can drive it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Peripheral {
+    /// Logical name, e.g. `"btn_a"` — referenced by wiring config and by a
+    /// theme's navigation map.
+    pub name: String,
+    pub kind: PeripheralKind,
+    /// GPIO pin(s): one for a button/indicator, two for a rotary encoder's
+    /// quadrature pair.
+    pub gpio: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PeripheralKind {
+    Button,
+    Indicator,
+    RotaryEncoder,
     Other(String),
 }

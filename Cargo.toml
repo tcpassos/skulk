@@ -9,7 +9,9 @@ members = [
     "crates/skulk-cli",
     "crates/skulk-tui",
     "crates/skulkd",
+    "crates/lcd-render",
     "crates/modules/sysinfo",
     "crates/modules/portscan",
     "crates/modules/services",
+    "crates/modules/dns-recon",
 ]

@@ -82,10 +82,40 @@ fn manifest_carries_capability_gating() {
             requires: vec![Capability::MonitorMode, Capability::PacketInjection],
         }],
         capabilities: vec![Capability::MonitorMode, Capability::Other("gps".into())],
+        peripherals: vec![
+            Peripheral { name: "btn_a".into(), kind: PeripheralKind::Button, gpio: vec![17] },
+            Peripheral {
+                name: "encoder".into(),
+                kind: PeripheralKind::RotaryEncoder,
+                gpio: vec![5, 6],
+            },
+        ],
     };
     let s = serde_json::to_string(&manifest).expect("serialize");
     let back: Manifest = serde_json::from_str(&s).expect("deserialize");
     assert_eq!(back, manifest);
+}
+
+#[test]
+fn manifest_without_peripherals_field_defaults_to_empty() {
+    // Backward compatibility: an implant on an older protocol version that
+    // never serialized `peripherals` must still deserialize cleanly.
+    let json = json!({
+        "protocol": PROTOCOL_VERSION,
+        "implant": { "id": "x", "hardware": "x", "firmware": "0" },
+        "modules": [],
+        "capabilities": [],
+    });
+    let manifest: Manifest = serde_json::from_value(json).expect("deserialize");
+    assert!(manifest.peripherals.is_empty());
+}
+
+#[test]
+fn peripheral_kind_other_roundtrips() {
+    let p = Peripheral { name: "gps_led".into(), kind: PeripheralKind::Other("gps".into()), gpio: vec![24] };
+    let s = serde_json::to_string(&p).expect("serialize");
+    let back: Peripheral = serde_json::from_str(&s).expect("deserialize");
+    assert_eq!(back, p);
 }
 
 #[test]

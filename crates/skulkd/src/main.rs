@@ -14,6 +14,8 @@ use std::time::Duration;
 
 use contract::ImplantInfo;
 use engine::{Engine, RedbLoot};
+#[cfg(feature = "mod-dns-recon")]
+use dns_recon::DnsRecon;
 #[cfg(feature = "mod-sysinfo")]
 use example_sysinfo::SysInfo;
 #[cfg(feature = "mod-portscan")]
@@ -69,7 +71,12 @@ async fn main() {
     engine.register(Arc::new(PortScan));
     #[cfg(feature = "mod-services")]
     engine.register(Arc::new(Services));
+    #[cfg(feature = "mod-dns-recon")]
+    engine.register(Arc::new(DnsRecon));
+    engine.set_peripherals(config.peripherals.into_iter().map(Into::into).collect());
     let engine = Arc::new(engine);
+
+    spawn_lcd(&engine, &config.display);
 
     if config.heartbeat_secs > 0 {
         engine.spawn_heartbeat(Duration::from_secs(config.heartbeat_secs));
@@ -114,6 +121,68 @@ async fn main() {
         }
     }
 }
+
+/// Bring up the on-device LCD, if `[display]` names a compiled-in driver.
+/// Never fatal: a missing/misconfigured screen logs and leaves the daemon
+/// running headless, the same "fail clean" stance as capability-gating.
+#[cfg(all(feature = "lcd", target_os = "linux"))]
+fn spawn_lcd(engine: &Arc<Engine>, disp: &config::DisplaySection) {
+    // Named `disp`, not `display`: `tracing`'s field macros treat a bare
+    // `display` identifier specially (it's also their `%`-sigil helper fn),
+    // and a same-named local shadows it in a way that fails to compile.
+    if disp.driver.is_empty() {
+        return;
+    }
+    if disp.driver != "mipidsi" {
+        tracing::warn!(driver = %disp.driver, "lcd: unknown driver, display stays off");
+        return;
+    }
+
+    let to_u16 = |field: &str, value: u32| match u16::try_from(value) {
+        Ok(v) => Some(v),
+        Err(_) => {
+            tracing::error!(field, value, "lcd: value out of range for a u16");
+            None
+        }
+    };
+    let (Some(width), Some(height), Some(offset_x), Some(offset_y)) = (
+        to_u16("width", disp.width),
+        to_u16("height", disp.height),
+        to_u16("offset_x", disp.offset_x),
+        to_u16("offset_y", disp.offset_y),
+    ) else {
+        return;
+    };
+    let mipidsi_config = lcd_render::MipidsiConfig {
+        width,
+        height,
+        offset_x,
+        offset_y,
+        spi_bus: disp.spi_bus,
+        spi_cs: disp.spi_cs,
+        dc_gpio: disp.dc_gpio,
+        rst_gpio: disp.rst_gpio,
+        bl_gpio: disp.bl_gpio,
+    };
+
+    match lcd_render::open_mipidsi(&mipidsi_config) {
+        Ok(panel) => {
+            tracing::info!(width, height, "lcd: display ready");
+            let rx = engine.subscribe();
+            // rppal's SPI/GPIO calls are blocking (direct /dev/spidev,
+            // /dev/gpiochip I/O), so the whole draw loop runs on a blocking
+            // thread rather than an async task; `block_on` drives its one
+            // async wait point (the channel recv) from inside that thread.
+            tokio::task::spawn_blocking(move || {
+                tokio::runtime::Handle::current().block_on(lcd_render::Renderer::new().run(rx, panel));
+            });
+        }
+        Err(e) => tracing::error!("lcd: cannot open display: {e}"),
+    }
+}
+
+#[cfg(not(all(feature = "lcd", target_os = "linux")))]
+fn spawn_lcd(_engine: &Arc<Engine>, _display: &config::DisplaySection) {}
 
 /// Initialise structured logging to stderr. `RUST_LOG` overrides the config filter.
 fn init_tracing(filter: &str) {

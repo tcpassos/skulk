@@ -1,0 +1,11 @@
+# Pins the toolchain for cargo, rustup, and rust-analyzer alike. Needed on
+# Windows because this repo builds against the GNU ABI (WinLibs mingw as the
+# linker), not the MSVC default — see the Cargo.lock gotcha in CLAUDE.md.
+#
+# Without this file the pin only existed as a per-machine `rustup override`,
+# invisible to fresh clones and to rust-analyzer's proc-macro server, which
+# would then load .dll artifacts built by this toolchain with a mismatched
+# (older) proc-macro-srv and fail with "unsupported metadata version".
+[toolchain]
+channel = "1.88.0-x86_64-pc-windows-gnu"
+components = ["clippy"]

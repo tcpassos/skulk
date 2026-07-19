@@ -1,6 +1,7 @@
 //! Runtime configuration, loaded from a TOML file. Every field is optional and
 //! falls back to a sane default, so a bare `implantd` with no config still runs.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -15,6 +16,15 @@ pub struct Config {
     pub log: String,
     /// Heartbeat interval in seconds; `0` disables the heartbeat.
     pub heartbeat_secs: u64,
+    /// On-device LCD, if any (the `lcd` feature). Empty `driver` means none.
+    pub display: DisplaySection,
+    /// Physical buttons/indicators/encoders wired to the device, surfaced in
+    /// the `Manifest` and consulted by the LCD's navigation.
+    pub peripherals: Vec<PeripheralConfig>,
+    /// Operator override of the LCD's peripheral-name -> nav-action mapping
+    /// (`lcd_render::NavMap`'s highest-precedence layer, above a theme's own
+    /// `[nav]`). Peripheral name -> one of `"up"`/`"down"`/`"select"`/`"back"`.
+    pub nav: HashMap<String, String>,
 }
 
 impl Default for Config {
@@ -23,8 +33,11 @@ impl Default for Config {
             implant: ImplantConfig::default(),
             transport: TransportSection::default(),
             loot: LootConfig::default(),
+            nav: HashMap::new(),
             log: "info".to_string(),
             heartbeat_secs: 30,
+            display: DisplaySection::default(),
+            peripherals: Vec::new(),
         }
     }
 }
@@ -78,6 +91,88 @@ impl Default for LootConfig {
     }
 }
 
+#[derive(Debug, Deserialize, PartialEq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayInterface {
+    Spi,
+    I2c,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DisplaySection {
+    /// Which `lcd-render` backend to drive, e.g. `"mipidsi"`. Empty means no
+    /// physical display is attached — the `lcd` feature, if compiled in,
+    /// stays idle.
+    pub driver: String,
+    pub width: u32,
+    pub height: u32,
+    /// Offset of the visible panel within the controller's addressable
+    /// framebuffer — most small SPI TFTs (including the Waveshare 1.14"
+    /// this was built against) need a nonzero value or the image is
+    /// shifted/cropped. Start at 0 and adjust against the real hardware.
+    pub offset_x: u32,
+    pub offset_y: u32,
+    pub interface: DisplayInterface,
+    /// SPI bus/chip-select index (maps to rppal's `Bus`/`SlaveSelect`).
+    pub spi_bus: u8,
+    pub spi_cs: u8,
+    /// BCM GPIO numbers for the data/command, reset, and backlight lines.
+    pub dc_gpio: u8,
+    pub rst_gpio: u8,
+    pub bl_gpio: u8,
+}
+
+impl Default for DisplaySection {
+    fn default() -> Self {
+        Self {
+            driver: String::new(),
+            width: 0,
+            height: 0,
+            offset_x: 0,
+            offset_y: 0,
+            interface: DisplayInterface::Spi,
+            spi_bus: 0,
+            spi_cs: 0,
+            dc_gpio: 0,
+            rst_gpio: 0,
+            bl_gpio: 0,
+        }
+    }
+}
+
+/// A `[[peripherals]]` entry: physical wiring, config-local (kept separate
+/// from `contract::Peripheral` so a typo in `skulk.toml` is caught by
+/// `deny_unknown_fields` — the wire type stays lenient on purpose).
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct PeripheralConfig {
+    pub name: String,
+    pub kind: PeripheralKindConfig,
+    /// One GPIO pin for a button/indicator, two for a rotary encoder's
+    /// quadrature pair.
+    pub gpio: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PeripheralKindConfig {
+    Button,
+    Indicator,
+    RotaryEncoder,
+}
+
+impl From<PeripheralConfig> for contract::Peripheral {
+    fn from(p: PeripheralConfig) -> Self {
+        let kind = match p.kind {
+            PeripheralKindConfig::Button => contract::PeripheralKind::Button,
+            PeripheralKindConfig::Indicator => contract::PeripheralKind::Indicator,
+            PeripheralKindConfig::RotaryEncoder => contract::PeripheralKind::RotaryEncoder,
+        };
+        contract::Peripheral { name: p.name, kind, gpio: p.gpio }
+    }
+}
+
 impl Config {
     /// Load configuration from `path`. A missing file is not an error — defaults
     /// are used. Only a malformed file fails.
@@ -114,5 +209,57 @@ mod tests {
         assert_eq!(cfg.transport.addr, "127.0.0.1:9000");
         assert_eq!(cfg.loot.path, "skulk-loot.redb");
         assert_eq!(cfg.heartbeat_secs, 30);
+        assert_eq!(cfg.display.driver, "", "no display by default");
+        assert!(cfg.peripherals.is_empty());
+        assert!(cfg.nav.is_empty());
+    }
+
+    #[test]
+    fn display_and_peripherals_parse() {
+        let text = r#"
+            [display]
+            driver = "mipidsi"
+            width = 240
+            height = 135
+            offset_x = 40
+            offset_y = 53
+            interface = "spi"
+            spi_bus = 0
+            spi_cs = 0
+            dc_gpio = 25
+            rst_gpio = 27
+            bl_gpio = 24
+
+            [[peripherals]]
+            name = "btn_a"
+            kind = "button"
+            gpio = [17]
+
+            [[peripherals]]
+            name = "encoder"
+            kind = "rotary_encoder"
+            gpio = [5, 6]
+
+            [nav]
+            btn_a = "up"
+        "#;
+        let cfg: Config = toml::from_str(text).expect("display + peripherals config must parse");
+        assert_eq!(cfg.display.driver, "mipidsi");
+        assert_eq!(cfg.display.width, 240);
+        assert_eq!(cfg.display.height, 135);
+        assert_eq!(cfg.display.offset_x, 40);
+        assert_eq!(cfg.display.offset_y, 53);
+        assert_eq!(cfg.display.interface, DisplayInterface::Spi);
+        assert_eq!(cfg.display.bl_gpio, 24);
+
+        assert_eq!(cfg.peripherals.len(), 2);
+        assert_eq!(cfg.peripherals[0].name, "btn_a");
+        assert_eq!(cfg.peripherals[0].gpio, vec![17]);
+        assert_eq!(cfg.peripherals[1].gpio, vec![5, 6]);
+
+        let converted: contract::Peripheral = cfg.peripherals[0].clone().into();
+        assert_eq!(converted.kind, contract::PeripheralKind::Button);
+
+        assert_eq!(cfg.nav.get("btn_a"), Some(&"up".to_string()));
     }
 }

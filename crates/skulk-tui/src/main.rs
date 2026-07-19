@@ -6,7 +6,7 @@ mod ui;
 
 use std::time::Duration;
 
-use app::{parse_input, App, Focus, Pending};
+use app::{App, Focus, Pending};
 use client::{Client, Sender};
 use contract::{Command, LootQuery};
 use crossterm::event::{Event as CEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -100,42 +100,55 @@ async fn handle_key(app: &mut App, key: KeyEvent, sender: &mut Sender) {
     match app.focus {
         Focus::Modules => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
-            KeyCode::Tab => app.focus = Focus::Input,
             KeyCode::Up => app.move_up(),
             KeyCode::Down => app.move_down(),
-            KeyCode::Enter => {
-                if let Some(template) = app.selected_template() {
-                    app.input = template;
-                    app.focus = Focus::Input;
-                }
+            // Open the field-by-field form for the selected module action.
+            KeyCode::Enter | KeyCode::Tab => {
+                app.open_form();
             }
+            // Reserved verbs (the free-text command line is gone): quick refreshes.
+            KeyCode::Char('r') => {
+                send(app, sender, Command::Describe, Pending::Describe, "describe").await
+            }
+            KeyCode::Char('l') => {
+                send(app, sender, Command::Loot(LootQuery::default()), Pending::Loot, "loot").await
+            }
+            KeyCode::Char('p') => send(app, sender, Command::Ping, Pending::Invoke, "ping").await,
             _ => {}
         },
-        Focus::Input => match key.code {
-            KeyCode::Esc | KeyCode::Tab => app.focus = Focus::Modules,
-            KeyCode::Backspace => {
-                app.input.pop();
-            }
-            KeyCode::Char(c) => app.input.push(c),
+        Focus::Form => match key.code {
+            KeyCode::Esc => app.close_form(),
+            KeyCode::Tab => app.form_next(),
+            KeyCode::BackTab => app.form_prev(),
+            KeyCode::Backspace => app.form_backspace(),
+            // Advance to the next field, or (on the last field) send the Invoke.
             KeyCode::Enter => {
-                let line = app.input.trim().to_string();
-                app.input.clear();
-                if line.is_empty() {
-                    return;
-                }
-                match parse_input(&line) {
-                    Ok((command, pending)) => match sender.send(command).await {
-                        Ok(id) => {
-                            app.pending.insert(id, pending);
-                            app.log(format!("> {line}"));
-                        }
-                        Err(e) => app.log(format!("send failed: {e}")),
-                    },
-                    Err(e) => app.log(format!("! {e}")),
+                if let Some(command) = app.form_enter() {
+                    let label = match &command {
+                        Command::Invoke(inv) => format!("{} {}", inv.module.0, inv.action),
+                        _ => String::new(),
+                    };
+                    send(app, sender, command, Pending::Invoke, &label).await;
+                    app.close_form();
                 }
             }
+            KeyCode::Char(c) => app.form_char(c),
             _ => {}
         },
+    }
+}
+
+/// Send a command, record its pending kind so the correlated result is routed,
+/// and echo it into the event log.
+async fn send(app: &mut App, sender: &mut Sender, command: Command, pending: Pending, label: &str) {
+    match sender.send(command).await {
+        Ok(id) => {
+            app.pending.insert(id, pending);
+            if !label.is_empty() {
+                app.log(format!("> {label}"));
+            }
+        }
+        Err(e) => app.log(format!("send failed: {e}")),
     }
 }
 

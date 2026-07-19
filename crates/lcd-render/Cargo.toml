@@ -1,0 +1,36 @@
+[package]
+name = "lcd-render"
+version = "0.1.0"
+edition = "2021"
+description = "On-device LCD renderer: subscribes to Event::ViewManifest and draws it via embedded-graphics"
+
+[features]
+# Each physical display/input driver is opt-in, same idea as skulkd's
+# `mod-*` module features: rppal/mipidsi are Linux-only (SPI/GPIO via /dev),
+# so these must never land in `default` or they break the Windows dev build.
+driver-mipidsi = ["dep:mipidsi", "dep:rppal", "dep:embedded-hal"]
+input-gpio = ["dep:rppal"]
+
+[dependencies]
+contract = { path = "../contract" }
+engine = { path = "../engine" }
+embedded-graphics = "0.8"
+tinybmp = "0.7"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["sync", "rt"] }
+mipidsi = { version = "0.10", optional = true }
+embedded-hal = { version = "1.0", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rppal = { version = "0.22", features = ["hal"], optional = true }
+
+[dev-dependencies]
+# `default-features = false` drops the `with-sdl` feature: SimulatorDisplay
+# (pure in-memory pixel buffer, all we use in tests) doesn't need it, and
+# pulling in the real SDL2 native lib is a Windows dev-machine build hazard
+# (see CLAUDE.md). A visual debug window would need `with-sdl` re-enabled.
+embedded-graphics-simulator = { version = "0.8", default-features = false }
+tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }

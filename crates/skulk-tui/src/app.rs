@@ -8,7 +8,7 @@ use contract::*;
 #[derive(PartialEq)]
 pub enum Focus {
     Modules,
-    Input,
+    Form,
 }
 
 /// What a sent command is, so its correlated Result can be routed.
@@ -16,6 +16,61 @@ pub enum Pending {
     Describe,
     Loot,
     Invoke,
+}
+
+/// One editable field of a [`Form`], derived from an action's [`ParamSpec`].
+/// The `default`/`example` are carried as *hints* only: the field starts empty
+/// (many declared defaults are prose like `"common ports"`, not literal input),
+/// and an empty field is simply omitted from the invoke so the module applies
+/// its own real default.
+pub struct Field {
+    pub name: String,
+    pub required: bool,
+    pub type_hint: Option<String>,
+    pub default: Option<String>,
+    pub example: Option<String>,
+    pub value: String,
+}
+
+/// A field-by-field editor for one module action, built from its `ParamSpec`s.
+/// Replaces the old free-text command line: the operator fills declared params
+/// directly instead of typing a `key=value` string.
+pub struct Form {
+    pub module: ModuleId,
+    pub action: String,
+    pub fields: Vec<Field>,
+    /// Index of the focused field.
+    pub cursor: usize,
+}
+
+impl Form {
+    /// The cursor is on the final field (or the form has no fields) — the point
+    /// at which Enter submits rather than advancing.
+    fn on_last(&self) -> bool {
+        self.cursor + 1 >= self.fields.len()
+    }
+
+    /// Compose the `Invoke` from the current field values. Empty fields are
+    /// omitted (the module keeps its own default); non-empty values infer their
+    /// JSON type, falling back to a string — the same rule the CLI uses.
+    fn to_invoke(&self) -> Invoke {
+        let mut map = serde_json::Map::new();
+        for f in &self.fields {
+            let raw = f.value.trim();
+            if raw.is_empty() {
+                continue;
+            }
+            let value = serde_json::from_str::<serde_json::Value>(raw)
+                .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()));
+            map.insert(f.name.clone(), value);
+        }
+        Invoke {
+            module: self.module.clone(),
+            action: self.action.clone(),
+            params: RawParams(serde_json::Value::Object(map)),
+            timeout_ms: None,
+        }
+    }
 }
 
 pub struct TaskRow {
@@ -44,7 +99,8 @@ pub struct App {
     pub rows: Vec<Row>,
     pub selected: usize,
     pub focus: Focus,
-    pub input: String,
+    /// The editable form for the module under the cursor, once opened.
+    pub form: Option<Form>,
     pub tasks: Vec<TaskRow>,
     pub events: Vec<String>,
     pub loot: Vec<LootEntry>,
@@ -67,7 +123,7 @@ impl App {
             rows: Vec::new(),
             selected: 0,
             focus: Focus::Modules,
-            input: String::new(),
+            form: None,
             tasks: Vec::new(),
             events: Vec::new(),
             loot: Vec::new(),
@@ -152,18 +208,85 @@ impl App {
         self.rows.get(self.selected).filter(|r| matches!(r, Row::Module { .. }))
     }
 
-    /// A pre-filled command line for the selected module: `<id> <action> ` plus a
-    /// `name=` stub for each required parameter, ready for the operator to fill.
-    pub fn selected_template(&self) -> Option<String> {
-        match self.rows.get(self.selected) {
-            Some(Row::Module { id, action, params, .. }) => {
-                let mut line = format!("{} {} ", id.0, action);
-                for p in params.iter().filter(|p| p.required) {
-                    line.push_str(&format!("{}=", p.name));
-                }
-                Some(line)
+    /// Open an editable form for the module action under the cursor and focus it,
+    /// one field per declared `ParamSpec`. Fields start empty (defaults are shown
+    /// as hints, not injected). Returns `false` if the cursor is not on a module.
+    /// Replaces the old `selected_template()` command-line stub.
+    pub fn open_form(&mut self) -> bool {
+        let (module, action, fields) = {
+            let Some(Row::Module { id, action, params, .. }) = self.rows.get(self.selected) else {
+                return false;
+            };
+            let fields = params
+                .iter()
+                .map(|p| Field {
+                    name: p.name.clone(),
+                    required: p.required,
+                    type_hint: p.type_hint.clone(),
+                    default: p.default.clone(),
+                    example: p.example.clone(),
+                    value: String::new(),
+                })
+                .collect();
+            (id.clone(), action.clone(), fields)
+        };
+        self.form = Some(Form { module, action, fields, cursor: 0 });
+        self.focus = Focus::Form;
+        true
+    }
+
+    /// Discard the open form and return focus to the module tree.
+    pub fn close_form(&mut self) {
+        self.form = None;
+        self.focus = Focus::Modules;
+    }
+
+    /// Move focus to the next field, wrapping to the first.
+    pub fn form_next(&mut self) {
+        if let Some(f) = self.form.as_mut() {
+            if !f.fields.is_empty() {
+                f.cursor = (f.cursor + 1) % f.fields.len();
             }
-            _ => None,
+        }
+    }
+
+    /// Move focus to the previous field, wrapping to the last.
+    pub fn form_prev(&mut self) {
+        if let Some(f) = self.form.as_mut() {
+            if !f.fields.is_empty() {
+                f.cursor = (f.cursor + f.fields.len() - 1) % f.fields.len();
+            }
+        }
+    }
+
+    /// Type a character into the focused field.
+    pub fn form_char(&mut self, c: char) {
+        if let Some(f) = self.form.as_mut() {
+            if let Some(field) = f.fields.get_mut(f.cursor) {
+                field.value.push(c);
+            }
+        }
+    }
+
+    /// Delete the last character of the focused field.
+    pub fn form_backspace(&mut self) {
+        if let Some(f) = self.form.as_mut() {
+            if let Some(field) = f.fields.get_mut(f.cursor) {
+                field.value.pop();
+            }
+        }
+    }
+
+    /// Enter within the form: advance to the next field, or — on the final field
+    /// (or an empty form) — return the `Invoke` command to send. The caller sends
+    /// it and calls [`App::close_form`].
+    pub fn form_enter(&mut self) -> Option<Command> {
+        let form = self.form.as_mut()?;
+        if form.on_last() {
+            Some(Command::Invoke(form.to_invoke()))
+        } else {
+            form.cursor += 1;
+            None
         }
     }
 
@@ -280,53 +403,6 @@ fn summarize_output(v: &serde_json::Value) -> String {
     }
 }
 
-/// Parse a CLI-style input line into a command (module-first, or a reserved verb).
-pub fn parse_input(line: &str) -> Result<(Command, Pending), String> {
-    let toks: Vec<&str> = line.split_whitespace().collect();
-    let first = *toks.first().ok_or("empty command")?;
-
-    if first.contains('.') {
-        let action = toks
-            .get(1)
-            .ok_or_else(|| format!("usage: {first} <action> [key=value ...]"))?;
-        let params = build_params(toks.get(2..).unwrap_or(&[]))?;
-        Ok((
-            Command::Invoke(Invoke {
-                module: ModuleId::from(first),
-                action: action.to_string(),
-                params,
-                timeout_ms: None,
-            }),
-            Pending::Invoke,
-        ))
-    } else {
-        match first {
-            "describe" | "modules" => Ok((Command::Describe, Pending::Describe)),
-            "loot" => Ok((Command::Loot(LootQuery::default()), Pending::Loot)),
-            "ping" => Ok((Command::Ping, Pending::Invoke)),
-            "shutdown" => {
-                let wipe = toks.iter().any(|t| *t == "--wipe");
-                let mode = if wipe { ShutdownMode::Wipe } else { ShutdownMode::Graceful };
-                Ok((Command::Shutdown { mode }, Pending::Invoke))
-            }
-            other => Err(format!("unknown command '{other}'")),
-        }
-    }
-}
-
-fn build_params(pairs: &[&str]) -> Result<RawParams, String> {
-    let mut map = serde_json::Map::new();
-    for pair in pairs {
-        let (key, raw) = pair
-            .split_once('=')
-            .ok_or_else(|| format!("bad parameter '{pair}' (expected key=value)"))?;
-        let value = serde_json::from_str::<serde_json::Value>(raw)
-            .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()));
-        map.insert(key.to_string(), value);
-    }
-    Ok(RawParams(serde_json::Value::Object(map)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,7 +416,18 @@ mod tests {
                     id: ModuleId::from("net.ports"),
                     version: "0".into(),
                     tactic: Some(Tactic::Discovery),
-                    actions: vec![ActionSpec { name: "scan".into(), description: None, params: vec![], params_schema: None }],
+                    actions: vec![ActionSpec {
+                        name: "scan".into(),
+                        description: None,
+                        params: vec![
+                            ParamSpec::required("target", "host", "IP or hostname to scan"),
+                            ParamSpec::optional("ports", "port-spec", "range/list")
+                                .with_default("common ports")
+                                .with_example("1-1024"),
+                            ParamSpec::optional("timeout_ms", "int", "per-port timeout").with_default("500"),
+                        ],
+                        params_schema: None,
+                    }],
                     requires: vec![],
                 },
                 ModuleDescriptor {
@@ -352,6 +439,7 @@ mod tests {
                 },
             ],
             capabilities: vec![], // no MonitorMode -> wifi.deauth unavailable
+            peripherals: vec![],
         }
     }
 
@@ -384,26 +472,130 @@ mod tests {
     }
 
     #[test]
-    fn module_invoke_infers_param_types() {
-        let (cmd, _) =
-            parse_input("net.ports scan target=127.0.0.1 ports=[1,1024] timeout=200").unwrap();
+    fn open_form_builds_empty_fields_from_params() {
+        let mut app = App::new("x".into());
+        app.set_manifest(sample_manifest());
+        assert_eq!(app.selected, 1); // net.ports scan
+        assert!(app.open_form());
+        assert!(app.focus == Focus::Form);
+        let form = app.form.as_ref().unwrap();
+        assert_eq!(form.module, ModuleId::from("net.ports"));
+        assert_eq!(form.action, "scan");
+        assert_eq!(form.fields.len(), 3);
+        assert_eq!(form.fields[0].name, "target");
+        assert!(form.fields[0].required);
+        // Fields start empty even though `ports` declares a (prose) default.
+        assert!(form.fields.iter().all(|f| f.value.is_empty()));
+        assert_eq!(form.cursor, 0);
+    }
+
+    #[test]
+    fn form_tab_cycles_fields_both_ways() {
+        let mut app = App::new("x".into());
+        app.set_manifest(sample_manifest());
+        app.open_form();
+        app.form_next();
+        assert_eq!(app.form.as_ref().unwrap().cursor, 1);
+        app.form_next();
+        app.form_next(); // wraps 2 -> 0
+        assert_eq!(app.form.as_ref().unwrap().cursor, 0);
+        app.form_prev(); // wraps 0 -> 2
+        assert_eq!(app.form.as_ref().unwrap().cursor, 2);
+    }
+
+    #[test]
+    fn form_char_and_backspace_edit_focused_field() {
+        let mut app = App::new("x".into());
+        app.set_manifest(sample_manifest());
+        app.open_form();
+        for c in "127.0.0.1".chars() {
+            app.form_char(c);
+        }
+        app.form_backspace();
+        assert_eq!(app.form.as_ref().unwrap().fields[0].value, "127.0.0.");
+        // Editing follows the cursor to the next field.
+        app.form_next();
+        app.form_char('8');
+        app.form_char('0');
+        assert_eq!(app.form.as_ref().unwrap().fields[1].value, "80");
+        assert_eq!(app.form.as_ref().unwrap().fields[0].value, "127.0.0.");
+    }
+
+    #[test]
+    fn form_enter_advances_then_submits_with_inferred_types() {
+        let mut app = App::new("x".into());
+        app.set_manifest(sample_manifest());
+        app.open_form();
+        for c in "127.0.0.1".chars() {
+            app.form_char(c);
+        }
+        assert!(app.form_enter().is_none(), "enter on field 0 only advances");
+        assert_eq!(app.form.as_ref().unwrap().cursor, 1);
+        for c in "[1,1024]".chars() {
+            app.form_char(c);
+        }
+        assert!(app.form_enter().is_none(), "enter on field 1 only advances");
+        for c in "200".chars() {
+            app.form_char(c);
+        }
+        let cmd = app.form_enter().expect("enter on the final field submits");
         match cmd {
             Command::Invoke(inv) => {
                 assert_eq!(inv.module, ModuleId::from("net.ports"));
                 assert_eq!(inv.action, "scan");
                 assert_eq!(inv.params.0["target"], serde_json::json!("127.0.0.1"));
                 assert_eq!(inv.params.0["ports"], serde_json::json!([1, 1024]));
-                assert_eq!(inv.params.0["timeout"], serde_json::json!(200));
+                assert_eq!(inv.params.0["timeout_ms"], serde_json::json!(200));
             }
             _ => panic!("expected an invoke command"),
         }
     }
 
     #[test]
-    fn reserved_verbs_and_unknown() {
-        assert!(matches!(parse_input("describe").unwrap().0, Command::Describe));
-        assert!(matches!(parse_input("loot").unwrap().0, Command::Loot(_)));
-        assert!(parse_input("bogus").is_err());
+    fn form_omits_empty_fields() {
+        let mut app = App::new("x".into());
+        app.set_manifest(sample_manifest());
+        app.open_form();
+        for c in "10.0.0.1".chars() {
+            app.form_char(c); // fill only `target`, leave ports/timeout_ms blank
+        }
+        match app.form_enter() {
+            None => {}
+            Some(_) => panic!("should advance, not submit, from field 0"),
+        }
+        // Jump to the last field and submit without typing anything there.
+        app.form_next(); // -> ports (empty)
+        let cmd = app.form_enter().expect("last field submits");
+        match cmd {
+            Command::Invoke(inv) => {
+                let obj = inv.params.0.as_object().unwrap();
+                assert_eq!(obj.len(), 1, "empty fields are omitted");
+                assert_eq!(obj["target"], serde_json::json!("10.0.0.1"));
+                assert!(!obj.contains_key("ports"));
+                assert!(!obj.contains_key("timeout_ms"));
+            }
+            _ => panic!("expected an invoke command"),
+        }
+    }
+
+    #[test]
+    fn empty_form_submits_immediately_and_close_resets_focus() {
+        let mut app = App::new("x".into());
+        app.set_manifest(sample_manifest());
+        app.move_down(); // -> wifi.deauth (no declared params), index 3
+        assert_eq!(app.selected, 3);
+        app.open_form();
+        assert!(app.form.as_ref().unwrap().fields.is_empty());
+        match app.form_enter().expect("an empty form submits on the first Enter") {
+            Command::Invoke(inv) => {
+                assert_eq!(inv.action, "start");
+                assert!(inv.params.0.as_object().unwrap().is_empty());
+            }
+            _ => panic!("expected an invoke command"),
+        }
+        app.close_form();
+        assert!(app.form.is_none());
+        assert!(app.focus == Focus::Modules);
     }
 
     #[test]

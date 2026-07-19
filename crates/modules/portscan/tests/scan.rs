@@ -46,18 +46,21 @@ async fn scan_finds_an_open_port() {
     );
     engine.handle(invoke).await;
 
+    let mut views: Vec<ViewManifest> = Vec::new();
     let result = loop {
         match timeout(Duration::from_secs(5), rx.recv()).await {
-            Ok(Ok(env)) => {
-                if let Body::Result(r) = env.body {
-                    break r;
-                }
-            }
+            Ok(Ok(env)) => match env.body {
+                Body::Result(r) => break r,
+                Body::Event(Event::ViewManifest(v)) => views.push(v),
+                _ => {}
+            },
             _ => panic!("no result received"),
         }
     };
 
     assert_eq!(result.status, TaskStatus::Ok);
+    assert!(!views.is_empty(), "expected at least one ViewManifest while scanning");
+    assert!(views.iter().all(|v| v.screen == "net.ports"));
     let open: Vec<u16> = result
         .output
         .0

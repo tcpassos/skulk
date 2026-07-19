@@ -20,3 +20,35 @@ addr = "127.0.0.1:9000"  # bind address (listen) or controller address (dial)
 
 [loot]
 path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKULK_LOOT
+
+# On-device LCD (the `lcd` feature). Omitted/empty driver -> no display.
+# [display]
+# driver = "mipidsi"   # e.g. Waveshare 1.14inch LCD Module (ST7789VW)
+# width = 240
+# height = 135
+# offset_x = 0   # panel offset within the controller's framebuffer -- these
+# offset_y = 0   # small SPI TFTs often need one; calibrate against real hardware
+# interface = "spi"
+# spi_bus = 0
+# spi_cs = 0
+# dc_gpio = 25
+# rst_gpio = 27
+# bl_gpio = 24
+
+# Physical buttons/indicators wired to the device — surfaced in the Manifest
+# and consulted by the LCD's navigation. Repeat [[peripherals]] per pin.
+# [[peripherals]]
+# name = "btn_a"
+# kind = "button"
+# gpio = [17]
+#
+# [[peripherals]]
+# name = "led_alert"
+# kind = "indicator"
+# gpio = [23]
+
+# Operator override of the LCD's button -> nav-action mapping. Highest
+# precedence, above whatever the active theme's own [nav] declares.
+# [nav]
+# btn_a = "up"
+# btn_b = "down"

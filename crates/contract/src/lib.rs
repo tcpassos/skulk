@@ -24,7 +24,8 @@ pub use error::{ErrorCode, ProtocolError};
 pub use event::{Event, LogLevel, Severity, ViewLine, ViewManifest};
 pub use ids::{MessageId, ModuleId, TaskId};
 pub use manifest::{
-    ActionSpec, Capability, ImplantInfo, Manifest, ModuleDescriptor, ParamSpec, Tactic,
+    ActionSpec, Capability, ImplantInfo, Manifest, ModuleDescriptor, ParamSpec, Peripheral,
+    PeripheralKind, Tactic,
 };
 pub use response::{Ack, TaskResult, TaskStatus};
 

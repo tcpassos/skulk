@@ -24,6 +24,11 @@ client        async client library (Client: connect/send/recv/run/
               watch/describe/loot). Proves the protocol is the boundary. deps: contract ONLY
 skulk-cli     the `skulk` CLI (binary named `skulk`).                    deps: client, contract
 skulkd        the daemon binary: engine + modules + transport.          deps: engine, transport, modules
+lcd-render    on-device LCD: in-process consumer of Engine::subscribe()
+              (never a socket client), draws Event::ViewManifest via
+              embedded-graphics; community themes (theme.toml + .bmp),
+              physical drivers (mipidsi/rppal) behind Linux-only, opt-in
+              feature flags so the Windows dev build never needs them.   deps: engine, contract
 crates/modules/*   attack/recon modules. e.g. example-sysinfo -> sys.info,
                    net-portscan -> net.ports, net-services -> net.services. deps: module-sdk, contract
 ```
@@ -105,6 +110,14 @@ Network modules take a `PortSpec` param (from `module-sdk`) for `ports`
 
 - **`cargo test` does NOT refresh `target/debug/skulkd.exe`.** Run
   `cargo build -p skulkd` before live-testing the binary, or you run a stale build.
+- **Windows builds need the GNU ABI, not MSVC.** `rust-toolchain.toml` pins
+  `1.88.0-x86_64-pc-windows-gnu`; you also need a mingw-w64 `gcc`/linker (e.g.
+  WinLibs) on `PATH` — the MSVC toolchain needs Visual Studio's `link.exe`,
+  which this environment doesn't have. If VS Code/rust-analyzer reports proc-macro
+  errors like `unsupported metadata version`, it's loading a `.dll` in
+  `target/debug/deps` built by a *different* toolchain than the one its
+  proc-macro server was resolved against — reload the rust-analyzer workspace
+  after any toolchain change so it re-resolves against `rust-toolchain.toml`.
 - **`Cargo.lock` is committed and `tokio` is pinned to 1.44.2.** This repo was
   built against an offline/stale crates.io index where tokio 1.53's `mio` dep
   didn't resolve once the `net` feature was on. Keep the lockfile; on a fresh
@@ -115,6 +128,25 @@ Network modules take a `PortSpec` param (from `module-sdk`) for `ports`
 - **CLI output is ASCII on purpose** (Windows PowerShell mangles unicode piped
   from a child process's stdout).
 - **redb** loot ops run via `tokio::task::spawn_blocking` (redb is blocking).
+- **`tracing`'s field macros special-case a bare `display` identifier**
+  (it's also their `%`-sigil helper fn) — a local variable/param named
+  `display` used inside `tracing::warn!(... = %display.field, ...)` fails to
+  compile with a confusing "no field on type `fn(_) -> DisplayValue<_>`"
+  error. Name it something else (`disp`, `cfg`, ...).
+- **Cross-check Linux-only code from Windows without real hardware**: install
+  a Linux target (`rustup target add aarch64-unknown-linux-gnu --toolchain
+  1.88.0-x86_64-pc-windows-gnu`) and run `cargo check --target
+  aarch64-unknown-linux-gnu` (add `--features ...` for whatever's behind a
+  `target_os = "linux"` gate, e.g. `lcd-render`'s `driver-mipidsi`/
+  `input-gpio`). This won't link (no cross-linker here), but `check` still
+  type-checks real usage of Linux-only crates (`rppal`, `mipidsi`, ...)
+  against their actual APIs — caught the `display`-vs-`tracing` gotcha above
+  before it ever reached real hardware.
+- **Rapid alternating `cargo check`/`--target ...` invocations can corrupt the
+  incremental build cache** — symptoms look like a real regression (a type
+  that's definitely in the source reports as "not found"), but a full crate
+  actually recompiles from scratch when checked alone. Fix: `cargo clean -p
+  <affected crates>` (not a full clean) and rebuild.
 
 ## Where to look
 
@@ -125,7 +157,15 @@ Network modules take a `PortSpec` param (from `module-sdk`) for `ports`
 
 Foundation complete and tested: engine, transport, persistent loot, config,
 tracing, capability detection, heartbeat, shutdown/wipe, per-module feature flags,
-client + CLI. Next per `ROADMAP.md`: the operator **TUI** (ratatui, manifest-driven,
-built on the `client` lib) or more attack modules (e.g. `dns_recon`).
+client + CLI, operator TUI (field-editable forms), recon modules (net.ports,
+net.services, dns.records). The **LCD renderer** (`lcd-render`) is code-complete
+and cross-target-verified (contract/engine plumbing, `ctx.view()`, theme system,
+`mipidsi`/`rppal` ST7789 backend, GPIO input + nav-mapping) but **not yet
+live-tested on real hardware** — that's the immediate next step, on a Pi Zero 2 W
++ Waveshare 1.14" LCD Module (`--features lcd`; see `[display]`/`[[peripherals]]`
+in `skulk.toml`). Two known open questions from that work, not yet decided:
+whether the LCD should support menu navigation/invoking actions or stay
+view-only, and whether the TUI's own colors should move onto the same
+`lcd_render::Theme` system instead of `skulk-tui/src/ui.rs`'s hardcoded consts.
 
 Every nontrivial change gets a test; run `cargo test` and keep it green.

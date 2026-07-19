@@ -26,6 +26,7 @@ fn now_ms() -> u64 {
 pub struct Engine {
     implant: ImplantInfo,
     capabilities: Vec<Capability>,
+    peripherals: Vec<Peripheral>,
     modules: HashMap<ModuleId, Arc<dyn ImplantModule>>,
     loot: Arc<dyn LootSink>,
     outbound: broadcast::Sender<Envelope>,
@@ -39,6 +40,7 @@ impl Engine {
         Self {
             implant,
             capabilities,
+            peripherals: Vec::new(),
             modules: HashMap::new(),
             loot,
             outbound,
@@ -51,6 +53,15 @@ impl Engine {
     pub fn register(&mut self, module: Arc<dyn ImplantModule>) -> &mut Self {
         let id = module.descriptor().id;
         self.modules.insert(id, module);
+        self
+    }
+
+    /// Declare the physical peripherals wired to this device (buttons,
+    /// indicators, encoders) — surfaced in the [`Manifest`] for a remote
+    /// controller, and consulted by the on-device LCD's navigation. Empty by
+    /// default: most builds (tests, non-LCD deployments) never call this.
+    pub fn set_peripherals(&mut self, peripherals: Vec<Peripheral>) -> &mut Self {
+        self.peripherals = peripherals;
         self
     }
 
@@ -260,6 +271,7 @@ impl Engine {
             implant: self.implant.clone(),
             modules: self.modules.values().map(|m| m.descriptor()).collect(),
             capabilities: self.capabilities.clone(),
+            peripherals: self.peripherals.clone(),
         }
     }
 }

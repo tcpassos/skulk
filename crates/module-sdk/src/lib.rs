@@ -15,6 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use contract::{
     Event, LogLevel, LootKind, LootQuery, ModuleDescriptor, ModuleId, RawParams, Severity, TaskId,
+    ViewLine, ViewManifest,
 };
 
 /// Re-exported so module authors can name it via `module_sdk::LootEntry`.
@@ -97,6 +98,15 @@ impl ModuleCtx {
             source: self.module.clone(),
             msg: msg.into(),
         });
+    }
+
+    /// Push a live tactical view (drives the on-device LCD and, if the
+    /// controller opted in, a remote TUI). `screen` is a short label for
+    /// what's being shown; `lines` replaces the previous view wholesale.
+    pub fn view(&self, screen: impl Into<String>, lines: Vec<ViewLine>) {
+        let _ = self
+            .events
+            .send(Event::ViewManifest(ViewManifest { screen: screen.into(), lines }));
     }
 
     /// Persist a loot item. The engine emits the `LootStored` event for you and

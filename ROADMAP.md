@@ -53,7 +53,7 @@ Backlog rastreável do projeto. Fonte de verdade do "o que falta". Marque com `[
 - [x] `medium` **Lib `client` + CLI `skulk`** — cliente do protocolo (depende só de `contract`): `connect/send/recv/run/watch/describe/loot`. Sintaxe module-first `<module> <action> key=value` com inferência de tipo (+ `--params-json`) e verbos `describe/loot/watch/ping/shutdown`. Teste automatizado + ao vivo.
 - [~] `medium` **TUI de operador** (`skulk-tui`) — dashboard `ratatui`+`crossterm` sobre a lib `client`. FEITO: árvore de módulos do Manifest (agrupada por namespace, disponibilidade por capability), painéis Events/Tasks/Loot ao vivo, linha de comando module-first, painel **DETAIL** com o help dos params (do `ParamSpec`), Enter pré-preenche os params obrigatórios. Client ganhou `split()`. Falta: formulário editável campo-a-campo, config local do operador (favoritos/recipes/keybindings), painel de ViewManifest.
 - [x] `easy` **Params auto-descritos** — `ActionSpec.params: Vec<ParamSpec>` no contrato (nome/tipo/obrigatório/default/exemplo); módulos declaram; `skulk describe` e a TUI mostram o help. `net.port_scan` aceita `ports` flexível e `timeout_ms`.
-- [ ] `medium` **Renderer LCD** — assina `ViewManifest`, desenha resumo tático → `embedded-graphics`, `mipidsi`/`st7735`, `rppal` (SPI)
+- [~] `medium` **Renderer LCD** (`lcd-render`) — consumidor in-process de `Engine::subscribe()` (nunca socket), desenha `Event::ViewManifest` via `embedded-graphics`. FEITO: `ctx.view()` em `module-sdk` (+ demo em `net.ports scan`), `Peripheral`/`PeripheralKind` no `Manifest` (fiação de GPIO auto-descrita), sistema de tema data-driven (`theme.toml` + assets `.bmp` via `tinybmp`, sem recompilar — pensado para temas da comunidade tipo Flipper/Pwnagotchi), backend `mipidsi`+`rppal` pro ST7789 (feature `driver-mipidsi`, Linux-only), camada de input plugável (`InputSource`, `GpioButtons` via `input-gpio`) + `NavMap` (override do operador > tema > sem binding). Tudo testado (simulador `embedded-graphics-simulator` + cross-check `--target aarch64-unknown-linux-gnu`). *Falta: validação ao vivo num Pi Zero 2 W + Waveshare 1.14" de verdade (nunca rodou em hardware real); decidir se o LCD navega o Manifest pra disparar ações ou fica só-visualização; decidir se a paleta do skulk-tui migra pro mesmo `Theme`.*
 
 ### Sobrevivência (reflexos locais, independentes do controlador)
 - [ ] `medium` **Sensor de tamper** (acelerômetro/PIR) → `Alert` → gatilho de wipe → `rppal`/`linux-embedded-hal`, `evdev`, driver do sensor
@@ -74,7 +74,7 @@ Backlog rastreável do projeto. Fonte de verdade do "o que falta". Marque com `[
 - [ ] `medium` **passive_sniff** — `pnet_datalink` (ou `pcap` FFI) + `etherparse` + `pcap-file`
 - [ ] `medium` **mdns_ssdp_llmnr_harvest** — `mdns-sd` + `ssdp-client` + listener `hickory-proto`
 - [ ] `easy` **passive_os_fingerprint** — `huginn-net` (p0f + JA4, reusa a captura)
-- [ ] `easy` **dns_recon** — `hickory-resolver` + `hickory-client` (AXFR)
+- [x] `easy` **`dns.records` enum** (dns_recon) — `hickory-resolver` (A/AAAA/NS/MX/TXT/SOA/CNAME) + `hickory-client` AXFR probe against each discovered nameserver, successful transfer alerts + zones stored as loot. Tested against a loopback fake nameserver (UDP + TCP AXFR).
 - [ ] `medium` **dhcp_recon** — `dhcproto` + `pnet` + tabela Fingerbank option-55
 - [ ] `hard` **wifi_recon** — stack AngryOxide (ver domínio WiFi)
 - [ ] `medium` **ble_recon** — `bluer`/`btleplug`

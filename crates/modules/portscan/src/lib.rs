@@ -9,7 +9,10 @@ use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 
-use contract::{ActionSpec, LogLevel, ModuleDescriptor, ModuleId, ParamSpec, RawParams, Tactic};
+use contract::{
+    ActionSpec, LogLevel, ModuleDescriptor, ModuleId, ParamSpec, RawParams, Severity, Tactic,
+    ViewLine,
+};
 use module_sdk::{raw_params, ImplantModule, ModuleCtx, ModuleError, ParseParams, PortSpec};
 
 pub struct PortScan;
@@ -118,6 +121,22 @@ impl ImplantModule for PortScan {
             if scanned % 64 == 0 || scanned == total {
                 let pct = ((scanned * 100) / total.max(1)) as u8;
                 ctx.progress(Some(pct), format!("{scanned}/{total}"));
+                ctx.view(
+                    "net.ports",
+                    vec![
+                        ViewLine { label: "TARGET".into(), value: target.clone(), severity: None },
+                        ViewLine {
+                            label: "SCANNED".into(),
+                            value: format!("{scanned}/{total}"),
+                            severity: None,
+                        },
+                        ViewLine {
+                            label: "OPEN".into(),
+                            value: open.len().to_string(),
+                            severity: if open.is_empty() { None } else { Some(Severity::Medium) },
+                        },
+                    ],
+                );
             }
             if ctx.cancelled() {
                 break;
