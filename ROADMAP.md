@@ -47,7 +47,7 @@ Backlog rastreável do projeto. Fonte de verdade do "o que falta". Marque com `[
 - [x] `medium` **Detecção de capabilities em runtime** — `caps::detect()` (Linux sonda `/sys/class/udc` + bluetooth; vazio em não-Linux) → `Manifest.capabilities`
 - [x] `easy` **Config/bootstrap** — `implant.toml` (TOML, todos os campos com default) + override `IMPLANT_LOOT`; testes de parse do arquivo real
 - [x] `easy` **Logging/tracing** — `tracing` estruturado (engine/transport/skulkd) + `EnvFilter` (`RUST_LOG`/config), saída em stderr
-- [ ] `medium` **Pipeline de cross-compile/deploy** para aarch64/armv7 (Pi Zero 2 W)
+- [~] `medium` **Pipeline de cross-compile/deploy** para aarch64/armv7 (Pi Zero 2 W) — `cross` (Docker) buildando do Windows confirmado ao vivo: `cross build --target armv7-unknown-linux-gnueabihf -p skulkd [--features lcd]` produz um ELF ARM 32-bit real (o Pi Zero 2 W de teste roda Raspberry Pi OS 32-bit — `uname -m` = `armv7l`, não aarch64). *Falta: automatizar a cópia pro device (hoje é `scp` manual) e decidir se vale um perfil `--release` dedicado.*
 
 ### UI / operador
 - [x] `medium` **Lib `client` + CLI `skulk`** — cliente do protocolo (depende só de `contract`): `connect/send/recv/run/watch/describe/loot`. Sintaxe module-first `<module> <action> key=value` com inferência de tipo (+ `--params-json`) e verbos `describe/loot/watch/ping/shutdown`. Teste automatizado + ao vivo.

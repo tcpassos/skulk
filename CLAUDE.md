@@ -49,6 +49,10 @@ cargo run -p skulkd           # daemon; reads ./skulk.toml (defaults if absent);
 target/debug/skulk describe   # the CLI (see `skulk help`)
 # slim firmware (only chosen modules):
 cargo build -p skulkd --no-default-features --features mod-portscan
+# cross-compile for a Pi Zero 2 W from Windows (needs Docker + `cross`;
+# confirm the real target with `uname -m` on the device -- armv7l here,
+# not aarch64, since it runs the 32-bit OS):
+cross build --target armv7-unknown-linux-gnueabihf -p skulkd --features lcd
 ```
 On Windows, `scripts/demo.ps1` runs an end-to-end tour (starts skulkd, drives it via `skulk`).
 
@@ -188,8 +192,12 @@ in `skulk.toml`). No theme directory is loaded from disk at runtime yet either
 `skulkd` always uses `Theme::default()` — wiring a configurable theme path is
 unstarted). Also still open: whether the TUI's own colors should move onto the
 same `lcd_render::Theme` system instead of `skulk-tui/src/ui.rs`'s hardcoded
-consts. Separately, a Docker-based cross-compile path (`cross`) is being set
-up so builds can happen on the Windows dev machine instead of natively on the
-Pi; the exact target triple (aarch64 vs armv7 userland) is still unconfirmed.
+consts. Cross-compiling from the Windows dev machine via `cross` (Docker) is
+confirmed working end-to-end: the test Pi Zero 2 W runs Raspberry Pi OS
+32-bit (`uname -m` -> `armv7l`), so the target is
+`armv7-unknown-linux-gnueabihf`, not aarch64 — `cross build --target
+armv7-unknown-linux-gnueabihf -p skulkd --features lcd` produces a real ARM
+ELF binary. Getting that binary onto the device is still a manual `scp`;
+no deploy automation yet.
 
 Every nontrivial change gets a test; run `cargo test` and keep it green.
