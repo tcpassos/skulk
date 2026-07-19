@@ -1,11 +1,16 @@
-# Pins the toolchain for cargo, rustup, and rust-analyzer alike. Needed on
-# Windows because this repo builds against the GNU ABI (WinLibs mingw as the
-# linker), not the MSVC default — see the Cargo.lock gotcha in CLAUDE.md.
+# Pins the rustc VERSION only (edition2024 / darling / instability need
+# >= 1.88 — see the Cargo.lock gotcha in CLAUDE.md). Deliberately no target
+# triple suffix: this file is read on every platform this project builds on
+# (Windows dev machines, the Pi Zero 2 W itself), and a bare version lets
+# rustup resolve each host's own native target automatically. A triple
+# baked in here (e.g. "1.88.0-x86_64-pc-windows-gnu") would try to install
+# Windows x86_64 binaries on Linux ARM and fail with "target tuple in
+# channel name" -- this shipped once and broke the Pi build; don't re-add it.
 #
-# Without this file the pin only existed as a per-machine `rustup override`,
-# invisible to fresh clones and to rust-analyzer's proc-macro server, which
-# would then load .dll artifacts built by this toolchain with a mismatched
-# (older) proc-macro-srv and fail with "unsupported metadata version".
+# Windows still needs the GNU ABI specifically (WinLibs mingw as the linker;
+# MSVC's link.exe isn't available in that sandbox) -- that pin lives in a
+# per-machine `rustup override set` there (higher precedence than this file),
+# not here, since it's a sandbox quirk, not a property of the project.
 [toolchain]
-channel = "1.88.0-x86_64-pc-windows-gnu"
+channel = "1.88.0"
 components = ["clippy"]
