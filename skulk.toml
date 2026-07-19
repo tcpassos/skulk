@@ -22,10 +22,16 @@ addr = "127.0.0.1:9000"  # bind address (listen) or controller address (dial)
 path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKULK_LOOT
 
 # On-device LCD (the `lcd` feature). Omitted/empty driver -> no display.
+# Two confirmed pin layouts so far (both Waveshare, both this same wiring --
+# only chip/resolution differ):
+#   - Waveshare 1.14inch LCD Module: chip = "st7789",  width = 240, height = 135
+#   - Waveshare 1.44inch LCD HAT:    chip = "st7735s", width = 128, height = 128
+#     (confirmed from a RaspyJack install's own LCD_Config.py on this pin layout)
 # [display]
-# driver = "mipidsi"   # e.g. Waveshare 1.14inch LCD Module (ST7789VW)
-# width = 240
-# height = 135
+# driver = "mipidsi"
+# chip = "st7735s"
+# width = 128
+# height = 128
 # offset_x = 0   # panel offset within the controller's framebuffer -- these
 # offset_y = 0   # small SPI TFTs often need one; calibrate against real hardware
 # interface = "spi"
@@ -34,6 +40,8 @@ path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKUL
 # dc_gpio = 25
 # rst_gpio = 27
 # bl_gpio = 24
+# bgr = true     # confirmed from LCD_1in44.py's MADCTL init (0x36 | 0x08) --
+                 # ST7789/1.14" boards are typically RGB (bgr = false) instead
 
 # Physical buttons/indicators wired to the device — surfaced in the Manifest
 # and consulted by the LCD's navigation. Repeat [[peripherals]] per pin.

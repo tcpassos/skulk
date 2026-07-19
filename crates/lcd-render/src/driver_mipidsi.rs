@@ -1,9 +1,9 @@
-//! ST7789 (and other MIPI-DCS panels `mipidsi` supports) over SPI via
-//! `rppal`. Linux-only — `rppal` talks to `/dev/spidev*`/`/dev/gpiochip*`,
-//! which don't exist elsewhere — so this whole module compiles to nothing
-//! unless both the platform AND the opt-in `driver-mipidsi` feature (which
-//! is what actually makes `mipidsi`/`rppal` available as dependencies) are
-//! present, matching the split already used in `skulkd::caps::detect`.
+//! MIPI-DCS panels over SPI via `rppal`, through `mipidsi`. Linux-only —
+//! `rppal` talks to `/dev/spidev*`/`/dev/gpiochip*`, which don't exist
+//! elsewhere — so this whole module compiles to nothing unless both the
+//! platform AND the opt-in `driver-mipidsi` feature (which is what actually
+//! makes `mipidsi`/`rppal` available as dependencies) are present, matching
+//! the split already used in `skulkd::caps::detect`.
 #![cfg(all(target_os = "linux", feature = "driver-mipidsi"))]
 
 use std::thread;
@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use embedded_hal::delay::DelayNs;
 use mipidsi::interface::SpiInterface;
-use mipidsi::models::ST7789;
+use mipidsi::models::{Model, ST7735s, ST7789};
+use mipidsi::options::ColorOrder;
 use mipidsi::{Builder, Display};
 use rppal::gpio::{Gpio, OutputPin};
 use rppal::spi::{Bus, Mode, SimpleHalSpiDevice, SlaveSelect, Spi};
@@ -23,9 +24,8 @@ use rppal::spi::{Bus, Mode, SimpleHalSpiDevice, SlaveSelect, Spi};
 pub struct Config {
     pub width: u16,
     pub height: u16,
-    /// Offset of the visible panel within the ST7789 controller's larger
-    /// addressable framebuffer (up to 240x320) — most small ST7789 boards,
-    /// including the Waveshare 1.14" this was built against, need a nonzero
+    /// Offset of the visible panel within the controller's larger
+    /// addressable framebuffer — most small MIPI-DCS boards need a nonzero
     /// offset or the image is shifted/cropped. Start at (0, 0) and adjust
     /// against the real display if the picture looks off.
     pub offset_x: u16,
@@ -35,14 +35,33 @@ pub struct Config {
     pub dc_gpio: u8,
     pub rst_gpio: u8,
     pub bl_gpio: u8,
+    /// Panel subpixel order. `mipidsi` defaults to RGB; several common small
+    /// boards (e.g. the Waveshare 1.44" LCD HAT / ST7735S, confirmed against
+    /// a working RaspyJack install's own MADCTL init) actually need BGR, or
+    /// colors come out swapped.
+    pub bgr: bool,
 }
 
-pub type St7789Display =
-    Display<SpiInterface<'static, SimpleHalSpiDevice, OutputPin>, ST7789, OutputPin>;
+pub type MipidsiDisplay<MODEL> =
+    Display<SpiInterface<'static, SimpleHalSpiDevice, OutputPin>, MODEL, OutputPin>;
+
+/// Waveshare's bare 1.14" LCD Module (this project's first target).
+pub fn open_st7789(config: &Config) -> Result<MipidsiDisplay<ST7789>, String> {
+    open(config, ST7789)
+}
+
+/// Waveshare's 1.44" LCD HAT (ST7735S) — e.g. the display already wired up
+/// by RaspyJack on a shared Pi; same pin conventions, different chip.
+pub fn open_st7735s(config: &Config) -> Result<MipidsiDisplay<ST7735s>, String> {
+    open(config, ST7735s)
+}
 
 /// Open the physical display per `config`. The backlight is driven high only
 /// after `init` succeeds, so a failed init doesn't flash garbage on screen.
-pub fn open(config: &Config) -> Result<St7789Display, String> {
+fn open<MODEL>(config: &Config, model: MODEL) -> Result<MipidsiDisplay<MODEL>, String>
+where
+    MODEL: Model<ColorFormat = embedded_graphics::pixelcolor::Rgb565>,
+{
     let bus = match config.spi_bus {
         0 => Bus::Spi0,
         1 => Bus::Spi1,
@@ -53,9 +72,9 @@ pub fn open(config: &Config) -> Result<St7789Display, String> {
         1 => SlaveSelect::Ss1,
         other => return Err(format!("unsupported spi_cs {other}, expected 0 or 1")),
     };
-    // 32 MHz: a common safe default for ST7789 over a short ribbon; slow
-    // this down first if the real display shows garbled pixels.
-    let spi = Spi::new(bus, slave_select, 32_000_000, Mode::Mode0)
+    // 9 MHz matches RaspyJack's proven-working LCD_Config.py for this exact
+    // pin layout; safer starting point than guessing a faster clock.
+    let spi = Spi::new(bus, slave_select, 9_000_000, Mode::Mode0)
         .map_err(|e| format!("cannot open SPI bus {}: {e}", config.spi_bus))?;
     let spi_device = SimpleHalSpiDevice::new(spi);
 
@@ -75,18 +94,20 @@ pub fn open(config: &Config) -> Result<St7789Display, String> {
     backlight.set_low();
 
     // `SpiInterface` needs a scratch buffer for chunked pixel writes, sized
-    // well under one full frame (135x240 RGB565 = 64_800 B) on purpose —
-    // it's a staging buffer, not a framebuffer. Leaked deliberately: the
-    // display (and this buffer) live for the daemon's whole run, so there's
-    // nowhere shorter-lived to own it without extra indirection.
+    // well under one full frame on purpose — it's a staging buffer, not a
+    // framebuffer. Leaked deliberately: the display (and this buffer) live
+    // for the daemon's whole run, so there's nowhere shorter-lived to own it
+    // without extra indirection.
     let buffer: &'static mut [u8] = Box::leak(Box::new([0u8; 4096]));
     let interface = SpiInterface::new(spi_device, dc, buffer);
 
+    let color_order = if config.bgr { ColorOrder::Bgr } else { ColorOrder::Rgb };
     let mut delay = StdDelay;
-    let display = Builder::new(ST7789, interface)
+    let display = Builder::new(model, interface)
         .reset_pin(rst)
         .display_size(config.width, config.height)
         .display_offset(config.offset_x, config.offset_y)
+        .color_order(color_order)
         .init(&mut delay)
         .map_err(|e| format!("display init failed: {e:?}"))?;
 

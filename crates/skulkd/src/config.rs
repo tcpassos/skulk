@@ -105,6 +105,10 @@ pub struct DisplaySection {
     /// physical display is attached — the `lcd` feature, if compiled in,
     /// stays idle.
     pub driver: String,
+    /// Controller chip within `driver`, e.g. `"st7789"` (Waveshare 1.14"
+    /// LCD Module) or `"st7735s"` (Waveshare 1.44" LCD HAT). Ignored by
+    /// drivers that only support one chip.
+    pub chip: String,
     pub width: u32,
     pub height: u32,
     /// Offset of the visible panel within the controller's addressable
@@ -121,12 +125,17 @@ pub struct DisplaySection {
     pub dc_gpio: u8,
     pub rst_gpio: u8,
     pub bl_gpio: u8,
+    /// Panel subpixel order. Most boards are RGB (the default); some,
+    /// including the Waveshare 1.44" LCD HAT / ST7735S, need BGR or colors
+    /// come out swapped.
+    pub bgr: bool,
 }
 
 impl Default for DisplaySection {
     fn default() -> Self {
         Self {
             driver: String::new(),
+            chip: String::new(),
             width: 0,
             height: 0,
             offset_x: 0,
@@ -137,6 +146,7 @@ impl Default for DisplaySection {
             dc_gpio: 0,
             rst_gpio: 0,
             bl_gpio: 0,
+            bgr: false,
         }
     }
 }
@@ -219,6 +229,7 @@ mod tests {
         let text = r#"
             [display]
             driver = "mipidsi"
+            chip = "st7789"
             width = 240
             height = 135
             offset_x = 40
@@ -229,6 +240,7 @@ mod tests {
             dc_gpio = 25
             rst_gpio = 27
             bl_gpio = 24
+            bgr = true
 
             [[peripherals]]
             name = "btn_a"
@@ -245,12 +257,14 @@ mod tests {
         "#;
         let cfg: Config = toml::from_str(text).expect("display + peripherals config must parse");
         assert_eq!(cfg.display.driver, "mipidsi");
+        assert_eq!(cfg.display.chip, "st7789");
         assert_eq!(cfg.display.width, 240);
         assert_eq!(cfg.display.height, 135);
         assert_eq!(cfg.display.offset_x, 40);
         assert_eq!(cfg.display.offset_y, 53);
         assert_eq!(cfg.display.interface, DisplayInterface::Spi);
         assert_eq!(cfg.display.bl_gpio, 24);
+        assert!(cfg.display.bgr);
 
         assert_eq!(cfg.peripherals.len(), 2);
         assert_eq!(cfg.peripherals[0].name, "btn_a");

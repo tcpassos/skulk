@@ -137,6 +137,10 @@ fn spawn_lcd(engine: &Arc<Engine>, disp: &config::DisplaySection) {
         tracing::warn!(driver = %disp.driver, "lcd: unknown driver, display stays off");
         return;
     }
+    if disp.chip.is_empty() {
+        tracing::warn!("lcd: [display].chip is required for driver 'mipidsi' (e.g. \"st7789\" or \"st7735s\")");
+        return;
+    }
 
     let to_u16 = |field: &str, value: u32| match u16::try_from(value) {
         Ok(v) => Some(v),
@@ -163,21 +167,27 @@ fn spawn_lcd(engine: &Arc<Engine>, disp: &config::DisplaySection) {
         dc_gpio: disp.dc_gpio,
         rst_gpio: disp.rst_gpio,
         bl_gpio: disp.bl_gpio,
+        bgr: disp.bgr,
     };
 
-    match lcd_render::open_mipidsi(&mipidsi_config) {
-        Ok(panel) => {
-            tracing::info!(width, height, "lcd: display ready");
-            let rx = engine.subscribe();
-            // rppal's SPI/GPIO calls are blocking (direct /dev/spidev,
-            // /dev/gpiochip I/O), so the whole draw loop runs on a blocking
-            // thread rather than an async task; `block_on` drives its one
-            // async wait point (the channel recv) from inside that thread.
-            tokio::task::spawn_blocking(move || {
-                tokio::runtime::Handle::current().block_on(lcd_render::Renderer::new().run(rx, panel));
-            });
+    match disp.chip.as_str() {
+        "st7789" => match lcd_render::open_st7789(&mipidsi_config) {
+            Ok(panel) => {
+                tracing::info!(width, height, chip = "st7789", "lcd: display ready");
+                lcd_render::spawn(engine.subscribe(), panel);
+            }
+            Err(e) => tracing::error!("lcd: cannot open display: {e}"),
+        },
+        "st7735s" => match lcd_render::open_st7735s(&mipidsi_config) {
+            Ok(panel) => {
+                tracing::info!(width, height, chip = "st7735s", "lcd: display ready");
+                lcd_render::spawn(engine.subscribe(), panel);
+            }
+            Err(e) => tracing::error!("lcd: cannot open display: {e}"),
+        },
+        other => {
+            tracing::warn!(chip = other, "lcd: unknown chip for driver 'mipidsi', display stays off");
         }
-        Err(e) => tracing::error!("lcd: cannot open display: {e}"),
     }
 }
 

@@ -10,7 +10,9 @@ mod input;
 mod theme;
 
 #[cfg(all(target_os = "linux", feature = "driver-mipidsi"))]
-pub use driver_mipidsi::{open as open_mipidsi, Config as MipidsiConfig, St7789Display};
+pub use driver_mipidsi::{
+    open_st7735s, open_st7789, Config as MipidsiConfig, MipidsiDisplay,
+};
 #[cfg(all(target_os = "linux", feature = "input-gpio"))]
 pub use driver_gpio_buttons::{ButtonConfig, GpioButtons};
 pub use input::{InputEvent, InputSource, NavAction, NavMap};
@@ -107,6 +109,22 @@ impl Renderer {
             }
         }
     }
+}
+
+/// Spawn a background task that draws `Event::ViewManifest`s from `rx` onto
+/// `target` (the default [`Theme`]) until the bus closes. A real display's
+/// draw calls block on SPI/I2C I/O, so this runs on a dedicated blocking
+/// thread rather than the async runtime — `block_on` drives the one async
+/// wait point (the channel recv) from inside that thread. Lets callers (e.g.
+/// `skulkd`) spawn any concrete display type without depending on
+/// `embedded-graphics` themselves just to name the bound.
+pub fn spawn<D>(rx: broadcast::Receiver<Envelope>, target: D)
+where
+    D: DrawTarget<Color = Rgb565> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        tokio::runtime::Handle::current().block_on(Renderer::new().run(rx, target));
+    });
 }
 
 /// Starting from `preferred` (or the largest candidate if `None`), the
