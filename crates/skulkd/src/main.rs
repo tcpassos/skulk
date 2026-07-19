@@ -8,6 +8,7 @@
 mod caps;
 mod config;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -76,7 +77,7 @@ async fn main() {
     engine.set_peripherals(config.peripherals.into_iter().map(Into::into).collect());
     let engine = Arc::new(engine);
 
-    spawn_lcd(&engine, &config.display);
+    spawn_lcd(&engine, &config.display, &config.nav);
 
     if config.heartbeat_secs > 0 {
         engine.spawn_heartbeat(Duration::from_secs(config.heartbeat_secs));
@@ -126,7 +127,7 @@ async fn main() {
 /// Never fatal: a missing/misconfigured screen logs and leaves the daemon
 /// running headless, the same "fail clean" stance as capability-gating.
 #[cfg(all(feature = "lcd", target_os = "linux"))]
-fn spawn_lcd(engine: &Arc<Engine>, disp: &config::DisplaySection) {
+fn spawn_lcd(engine: &Arc<Engine>, disp: &config::DisplaySection, nav: &HashMap<String, String>) {
     // Named `disp`, not `display`: `tracing`'s field macros treat a bare
     // `display` identifier specially (it's also their `%`-sigil helper fn),
     // and a same-named local shadows it in a way that fails to compile.
@@ -170,18 +171,26 @@ fn spawn_lcd(engine: &Arc<Engine>, disp: &config::DisplaySection) {
         bgr: disp.bgr,
     };
 
+    // No theme directory is loaded from disk yet (reserved -- see
+    // ROADMAP.md), so only the operator's own `[nav]` binds anything today;
+    // an unbound peripheral just does nothing on the LCD until either a
+    // theme provides a binding or the operator adds one.
+    let manifest = engine.manifest();
+    let input = build_input(&manifest.peripherals);
+    let nav_map = lcd_render::NavMap::new(nav, &HashMap::new());
+
     match disp.chip.as_str() {
         "st7789" => match lcd_render::open_st7789(&mipidsi_config) {
             Ok(panel) => {
                 tracing::info!(width, height, chip = "st7789", "lcd: display ready");
-                lcd_render::spawn(engine.subscribe(), panel);
+                lcd_render::spawn_app(engine.clone(), manifest, input, nav_map, panel);
             }
             Err(e) => tracing::error!("lcd: cannot open display: {e}"),
         },
         "st7735s" => match lcd_render::open_st7735s(&mipidsi_config) {
             Ok(panel) => {
                 tracing::info!(width, height, chip = "st7735s", "lcd: display ready");
-                lcd_render::spawn(engine.subscribe(), panel);
+                lcd_render::spawn_app(engine.clone(), manifest, input, nav_map, panel);
             }
             Err(e) => tracing::error!("lcd: cannot open display: {e}"),
         },
@@ -191,8 +200,30 @@ fn spawn_lcd(engine: &Arc<Engine>, disp: &config::DisplaySection) {
     }
 }
 
+/// Real GPIO buttons for every wired `Button` peripheral, or a no-op source
+/// when none are configured (or opening the pins fails) -- the tactical
+/// view still renders either way, it just never shows the menu.
+#[cfg(all(feature = "lcd", target_os = "linux"))]
+fn build_input(peripherals: &[contract::Peripheral]) -> Box<dyn lcd_render::InputSource> {
+    let buttons: Vec<lcd_render::ButtonConfig> = peripherals
+        .iter()
+        .filter(|p| p.kind == contract::PeripheralKind::Button)
+        .filter_map(|p| p.gpio.first().map(|&gpio| lcd_render::ButtonConfig { name: p.name.clone(), gpio }))
+        .collect();
+    if buttons.is_empty() {
+        return Box::new(lcd_render::NoInput);
+    }
+    match lcd_render::GpioButtons::open(&buttons) {
+        Ok(gpio) => Box::new(gpio),
+        Err(e) => {
+            tracing::error!("lcd: cannot open buttons: {e}");
+            Box::new(lcd_render::NoInput)
+        }
+    }
+}
+
 #[cfg(not(all(feature = "lcd", target_os = "linux")))]
-fn spawn_lcd(_engine: &Arc<Engine>, _display: &config::DisplaySection) {}
+fn spawn_lcd(_engine: &Arc<Engine>, _display: &config::DisplaySection, _nav: &HashMap<String, String>) {}
 
 /// Initialise structured logging to stderr. `RUST_LOG` overrides the config filter.
 fn init_tracing(filter: &str) {

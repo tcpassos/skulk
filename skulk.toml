@@ -43,10 +43,28 @@ path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKUL
 
 # Physical buttons/indicators wired to the device — surfaced in the Manifest
 # and consulted by the LCD's navigation. Repeat [[peripherals]] per pin.
+# GPIO numbers below are placeholders -- use your board's actual wiring.
+# Any single bound button will open the on-device menu; a full up/down/
+# select/back set (as mapped in [nav] below) is what makes it fully usable.
 # [[peripherals]]
-# name = "btn_a"
+# name = "btn_up"
 # kind = "button"
-# gpio = [17]
+# gpio = [6]
+#
+# [[peripherals]]
+# name = "btn_down"
+# kind = "button"
+# gpio = [19]
+#
+# [[peripherals]]
+# name = "btn_select"
+# kind = "button"
+# gpio = [13]
+#
+# [[peripherals]]
+# name = "btn_back"
+# kind = "button"
+# gpio = [26]
 #
 # [[peripherals]]
 # name = "led_alert"
@@ -54,7 +72,11 @@ path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKUL
 # gpio = [23]
 
 # Operator override of the LCD's button -> nav-action mapping. Highest
-# precedence, above whatever the active theme's own [nav] declares.
+# precedence, above whatever the active theme's own [nav] declares (no
+# theme is loaded from disk yet, so today this is the only layer that binds
+# anything). One of "up"/"down"/"select"/"back" per peripheral name.
 # [nav]
-# btn_a = "up"
-# btn_b = "down"
+# btn_up = "up"
+# btn_down = "down"
+# btn_select = "select"
+# btn_back = "back"

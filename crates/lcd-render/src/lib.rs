@@ -7,6 +7,7 @@
 mod driver_gpio_buttons;
 mod driver_mipidsi;
 mod input;
+mod menu;
 mod theme;
 
 #[cfg(all(target_os = "linux", feature = "driver-mipidsi"))]
@@ -16,15 +17,19 @@ pub use driver_mipidsi::{
 #[cfg(all(target_os = "linux", feature = "input-gpio"))]
 pub use driver_gpio_buttons::{ButtonConfig, GpioButtons};
 pub use input::{InputEvent, InputSource, NavAction, NavMap};
+pub use menu::{App, Menu, Row, Screen};
 pub use theme::{decode_bmp, SeverityPalette, Theme, ThemeError};
 
-use contract::{Body, Envelope, Event, Severity, ViewManifest};
+use std::sync::Arc;
+
+use contract::{Body, Envelope, Event, Manifest, Severity, ViewManifest};
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::Point;
-use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
+use embedded_graphics::mono_font::{MonoFont, MonoTextStyle, MonoTextStyleBuilder};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::text::Text;
 use embedded_graphics::Drawable;
+use engine::Engine;
 use theme::FONT_CANDIDATES;
 use tokio::sync::broadcast;
 
@@ -89,6 +94,60 @@ impl Renderer {
         }
     }
 
+    /// Draw the browsable module menu, replacing whatever was on `target`
+    /// before. The selected row renders foreground/background-swapped —
+    /// the only place this crate needs an inverted style, so it's built
+    /// here rather than added as a `Theme` field.
+    pub fn draw_menu<D>(&self, target: &mut D, menu: &Menu) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        target.clear(self.theme.background)?;
+
+        let bounds = target.bounding_box();
+        let rows = menu.rows();
+        let font = pick_font(Some(self.theme.font), bounds.size.height, rows.len() as u32 + 1);
+        let header_style = MonoTextStyle::new(font, self.theme.foreground);
+        let selected_style = MonoTextStyleBuilder::new()
+            .font(font)
+            .text_color(self.theme.background)
+            .background_color(self.theme.foreground)
+            .build();
+        let line_height = (font.character_size.height + font.character_spacing) as i32;
+
+        let mut y = font.character_size.height as i32;
+        Text::new("MENU", Point::new(0, y), header_style).draw(target)?;
+
+        for (i, row) in rows.iter().enumerate() {
+            y += line_height;
+            if y > bounds.size.height as i32 {
+                break; // overflow: v1 truncates, no scrolling/paging yet
+            }
+            let text = match row {
+                Row::Group(name) => format!("{name}/"),
+                Row::Module { id, action, invokable } => {
+                    let name = id.0.split_once('.').map(|(_, n)| n).unwrap_or(&id.0);
+                    let marker = if *invokable { "" } else { " *" };
+                    format!(" {name} {action}{marker}")
+                }
+            };
+            let style = if i == menu.selected() { selected_style } else { MonoTextStyle::new(font, self.theme.foreground) };
+            Text::new(&text, Point::new(0, y), style).draw(target)?;
+        }
+        Ok(())
+    }
+
+    /// Draw whichever of the two screens `app` currently has active.
+    pub fn draw_app<D>(&self, target: &mut D, app: &App) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        match app.screen() {
+            Screen::Status => self.draw(target, &app.status_view()),
+            Screen::Menu => self.draw_menu(target, app.menu()),
+        }
+    }
+
     /// Consume `Event::ViewManifest` off the engine's bus and draw each one
     /// as it arrives. Runs until the bus closes (engine shutdown).
     pub async fn run<D>(&self, mut rx: broadcast::Receiver<Envelope>, mut target: D)
@@ -124,6 +183,91 @@ where
 {
     tokio::task::spawn_blocking(move || {
         tokio::runtime::Handle::current().block_on(Renderer::new().run(rx, target));
+    });
+}
+
+/// The default `InputSource` for units with no `[[peripherals]]` wired: it
+/// never produces an event, so [`run_app`]'s menu stays permanently
+/// unreachable and the loop behaves exactly like [`run`] -- tactical view
+/// only. Never returns rather than immediately yielding `None`, so it can't
+/// be mistaken by the select loop for an exhausted/closed real source.
+pub struct NoInput;
+
+#[async_trait::async_trait]
+impl InputSource for NoInput {
+    async fn next_event(&mut self) -> Option<InputEvent> {
+        std::future::pending().await
+    }
+}
+
+/// Runs the full on-device experience: the tactical `ViewManifest` (as
+/// [`run`] already does) plus a browsable/invokable menu built from
+/// `manifest`, toggled by `input` events resolved through `nav`. Takes
+/// `engine` itself, not just its bus -- activating a menu row sends a
+/// `Command::Invoke` back into it, the one place this crate reaches beyond
+/// "draw what the bus already published". Returns once both the bus and
+/// `input` are exhausted (engine shutdown).
+pub async fn run_app<D>(
+    engine: Arc<Engine>,
+    manifest: &Manifest,
+    mut input: Box<dyn InputSource>,
+    nav: NavMap,
+    mut target: D,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let renderer = Renderer::new();
+    let mut app = App::new(manifest);
+    let mut rx = engine.subscribe();
+
+    if renderer.draw_app(&mut target, &app).is_err() {
+        tracing::warn!("lcd-render: draw failed");
+    }
+
+    loop {
+        tokio::select! {
+            result = rx.recv() => {
+                match result {
+                    Ok(env) => {
+                        if let Some(view) = menu::as_view_manifest(env) {
+                            app.apply_view(view);
+                            if app.screen() == Screen::Status && renderer.draw_app(&mut target, &app).is_err() {
+                                tracing::warn!("lcd-render: draw failed");
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            event = input.next_event() => {
+                match event {
+                    Some(InputEvent::Pressed(peripheral)) => {
+                        if let Some(action) = nav.resolve(&peripheral) {
+                            if let Some(cmd) = app.apply_nav(action) {
+                                engine.handle(menu::envelope(cmd)).await;
+                            }
+                            if renderer.draw_app(&mut target, &app).is_err() {
+                                tracing::warn!("lcd-render: draw failed");
+                            }
+                        }
+                    }
+                    Some(_) => {} // Released/Rotated: no menu behaviour defined yet
+                    None => break, // the input source is permanently exhausted
+                }
+            }
+        }
+    }
+}
+
+/// Spawn [`run_app`] on a dedicated blocking thread, for the same reason as
+/// [`spawn`]: a real display's draw calls block on SPI/I2C I/O.
+pub fn spawn_app<D>(engine: Arc<Engine>, manifest: Manifest, input: Box<dyn InputSource>, nav: NavMap, target: D)
+where
+    D: DrawTarget<Color = Rgb565> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        tokio::runtime::Handle::current().block_on(run_app(engine, &manifest, input, nav, target));
     });
 }
 
@@ -234,5 +378,57 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(2), Renderer::new().run(rx, display))
             .await
             .expect("run() should return once the channel closes, not hang");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_app_opens_the_menu_and_invokes_a_selection() {
+        let implant = contract::ImplantInfo { id: "t".into(), hardware: "t".into(), firmware: "0".into() };
+        let mut engine = Engine::new(implant, Vec::new(), std::sync::Arc::new(engine::MemLoot::default()));
+        engine.register(std::sync::Arc::new(example_sysinfo::SysInfo));
+        let engine = Arc::new(engine);
+        let manifest = engine.manifest();
+        let mut bus = engine.subscribe();
+
+        // "btn_open" merely wakes the menu up (any resolved action does,
+        // per App::apply_nav); "btn_select" then activates the only
+        // invokable row -- sys.info's sole module, sole action.
+        let nav = NavMap::new(
+            &std::collections::HashMap::new(),
+            &[("btn_open".to_string(), "down".to_string()), ("btn_select".to_string(), "select".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let input: Box<dyn InputSource> = Box::new(QueuedInput(
+            [InputEvent::Pressed("btn_open".into()), InputEvent::Pressed("btn_select".into())].into(),
+        ));
+        let display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(Size::new(128, 128));
+
+        // Returns once QueuedInput's third poll yields None -- proving the
+        // Select press actually drove `apply_nav` rather than getting stuck.
+        run_app(engine, &manifest, input, nav, display).await;
+
+        let result = loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), bus.recv()).await {
+                Ok(Ok(env)) => {
+                    if let Body::Result(r) = env.body {
+                        break r;
+                    }
+                }
+                _ => panic!("no result received for the menu-triggered invoke"),
+            }
+        };
+        assert_eq!(result.status, contract::TaskStatus::Ok);
+    }
+
+    /// A hardware-free `InputSource` that replays a fixed event queue, then
+    /// reports itself exhausted -- lets a test drive `run_app` to a clean,
+    /// deterministic stop without any real GPIO.
+    struct QueuedInput(std::collections::VecDeque<InputEvent>);
+
+    #[async_trait::async_trait]
+    impl InputSource for QueuedInput {
+        async fn next_event(&mut self) -> Option<InputEvent> {
+            self.0.pop_front()
+        }
     }
 }

@@ -265,7 +265,12 @@ impl Engine {
         });
     }
 
-    fn manifest(&self) -> Manifest {
+    /// The implant's current self-description -- the same `Manifest` a
+    /// remote controller gets back from `Command::Describe`, exposed
+    /// directly for in-process consumers that already bypass the wire
+    /// protocol (see [`Engine::subscribe`]'s doc comment), e.g. the
+    /// on-device LCD building its menu from the compiled-in module set.
+    pub fn manifest(&self) -> Manifest {
         Manifest {
             protocol: PROTOCOL_VERSION,
             implant: self.implant.clone(),

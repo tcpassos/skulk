@@ -28,7 +28,11 @@ lcd-render    on-device LCD: in-process consumer of Engine::subscribe()
               (never a socket client), draws Event::ViewManifest via
               embedded-graphics; community themes (theme.toml + .bmp),
               physical drivers (mipidsi/rppal) behind Linux-only, opt-in
-              feature flags so the Windows dev build never needs them.   deps: engine, contract
+              feature flags so the Windows dev build never needs them.
+              run_app()/spawn_app() also drive a browsable on-device menu
+              (built from the Manifest) toggled by physical buttons
+              (InputSource/NavMap), invoking param-less actions straight
+              from the screen; NoInput is the zero-buttons fallback.     deps: engine, contract
 crates/modules/*   attack/recon modules. e.g. example-sysinfo -> sys.info,
                    net-portscan -> net.ports, net-services -> net.services. deps: module-sdk, contract
 ```
@@ -110,14 +114,20 @@ Network modules take a `PortSpec` param (from `module-sdk`) for `ports`
 
 - **`cargo test` does NOT refresh `target/debug/skulkd.exe`.** Run
   `cargo build -p skulkd` before live-testing the binary, or you run a stale build.
-- **Windows builds need the GNU ABI, not MSVC.** `rust-toolchain.toml` pins
-  `1.88.0-x86_64-pc-windows-gnu`; you also need a mingw-w64 `gcc`/linker (e.g.
-  WinLibs) on `PATH` — the MSVC toolchain needs Visual Studio's `link.exe`,
-  which this environment doesn't have. If VS Code/rust-analyzer reports proc-macro
-  errors like `unsupported metadata version`, it's loading a `.dll` in
-  `target/debug/deps` built by a *different* toolchain than the one its
-  proc-macro server was resolved against — reload the rust-analyzer workspace
-  after any toolchain change so it re-resolves against `rust-toolchain.toml`.
+- **Windows builds need the GNU ABI, not MSVC** (Visual Studio's `link.exe`
+  isn't available in every environment this project is built in) — but
+  `rust-toolchain.toml` deliberately pins a **bare** `channel = "1.88.0"`,
+  no target-triple suffix. A suffixed channel (e.g.
+  `"1.88.0-x86_64-pc-windows-gnu"`) is read on *every* platform this project
+  builds on, including the Pi itself, and fails there with "target tuple in
+  channel name" — this shipped once and broke the Pi build. The GNU-ABI
+  requirement is a per-machine concern instead: `rustup override set
+  1.88.0-x86_64-pc-windows-gnu` in the repo directory on a Windows box that
+  needs it, plus a mingw-w64 `gcc`/linker (e.g. WinLibs) on `PATH`. If VS
+  Code/rust-analyzer reports proc-macro errors like `unsupported metadata
+  version`, it's loading a `.dll` in `target/debug/deps` built by a
+  *different* toolchain than the one its proc-macro server was resolved
+  against — reload the rust-analyzer workspace after any toolchain change.
 - **`Cargo.lock` is committed and `tokio` is pinned to 1.44.2.** This repo was
   built against an offline/stale crates.io index where tokio 1.53's `mio` dep
   didn't resolve once the `net` feature was on. Keep the lockfile; on a fresh
@@ -160,12 +170,26 @@ tracing, capability detection, heartbeat, shutdown/wipe, per-module feature flag
 client + CLI, operator TUI (field-editable forms), recon modules (net.ports,
 net.services, dns.records). The **LCD renderer** (`lcd-render`) is code-complete
 and cross-target-verified (contract/engine plumbing, `ctx.view()`, theme system,
-`mipidsi`/`rppal` ST7789 backend, GPIO input + nav-mapping) but **not yet
-live-tested on real hardware** — that's the immediate next step, on a Pi Zero 2 W
-+ Waveshare 1.14" LCD Module (`--features lcd`; see `[display]`/`[[peripherals]]`
-in `skulk.toml`). Two known open questions from that work, not yet decided:
-whether the LCD should support menu navigation/invoking actions or stay
-view-only, and whether the TUI's own colors should move onto the same
-`lcd_render::Theme` system instead of `skulk-tui/src/ui.rs`'s hardcoded consts.
+`mipidsi`/`rppal` ST7789/ST7735S backend, GPIO input + nav-mapping) — including
+the on-device **menu** (`menu::{Row, Menu, Screen, App}` + `Renderer::draw_menu`/
+`draw_app` + `run_app`/`spawn_app`, wired into `skulkd::spawn_lcd` via
+`build_input`): any bound button opens a browsable, grouped list of the
+Manifest's modules/actions, Select invokes whichever row has no required
+params, and the screen falls back to the tactical `ViewManifest` view when
+there's nothing to browse (no peripherals configured -> `NoInput`, the loop
+behaves exactly like the view-only path). This resolves the "should the LCD
+navigate the Manifest or stay view-only" open question from Phase 5's design
+in favor of "navigate" — lives in `skulkd`, not a separate binary, since it
+owns the same SPI/GPIO bus exclusively anyway. **Still not live-tested on real
+hardware** — that's the immediate next step, on a Pi Zero 2 W + Waveshare
+1.14"/1.44" panel (`--features lcd`; see `[display]`/`[[peripherals]]`/`[nav]`
+in `skulk.toml`). No theme directory is loaded from disk at runtime yet either
+(the `theme.toml` parser in `lcd-render::theme` is implemented and tested, but
+`skulkd` always uses `Theme::default()` — wiring a configurable theme path is
+unstarted). Also still open: whether the TUI's own colors should move onto the
+same `lcd_render::Theme` system instead of `skulk-tui/src/ui.rs`'s hardcoded
+consts. Separately, a Docker-based cross-compile path (`cross`) is being set
+up so builds can happen on the Windows dev machine instead of natively on the
+Pi; the exact target triple (aarch64 vs armv7 userland) is still unconfirmed.
 
 Every nontrivial change gets a test; run `cargo test` and keep it green.

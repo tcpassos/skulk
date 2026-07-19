@@ -14,7 +14,11 @@ mod-services = ["dep:net-services"]
 mod-dns-recon = ["dep:dns-recon"]
 # On-device LCD. Not in `default`: the display driver deps are Linux-only
 # and heavier than a typical recon module, so an operator opts in per build.
-lcd = ["dep:lcd-render", "lcd-render/driver-mipidsi"]
+# Bundles input-gpio too -- both ride on the same already-required `rppal`
+# dependency, and `spawn_lcd` falls back to `NoInput` at runtime on units
+# with no button peripherals configured, so there's no cost to always having
+# button support compiled in alongside the display.
+lcd = ["dep:lcd-render", "lcd-render/driver-mipidsi", "lcd-render/input-gpio"]
 
 [dependencies]
 contract = { path = "../contract" }

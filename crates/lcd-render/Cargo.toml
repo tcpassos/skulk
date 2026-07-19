@@ -34,3 +34,7 @@ rppal = { version = "0.22", features = ["hal"], optional = true }
 # (see CLAUDE.md). A visual debug window would need `with-sdl` re-enabled.
 embedded-graphics-simulator = { version = "0.8", default-features = false }
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
+# The smallest complete `ImplantModule` (see CLAUDE.md) -- used only to prove
+# a menu-triggered Select actually reaches a real registered module and
+# produces a Result, without pulling a heavier recon module into the graph.
+example-sysinfo = { path = "../modules/sysinfo" }
