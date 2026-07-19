@@ -246,7 +246,10 @@ fn command_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             }
             s
         }
-        None => "Enter: fill the selected module's form    r: refresh   l: loot   p: ping".to_string(),
+        None => {
+            "Enter: fill the selected module's form    r: refresh   l: loot   p: ping   c: stop task"
+                .to_string()
+        }
     };
     let style = if focused { Style::new().fg(ACCENT) } else { Style::new().fg(DIM) };
     let para = Paragraph::new(Line::from(vec![Span::raw("> "), Span::raw(text)]))
@@ -257,7 +260,8 @@ fn command_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
 fn footer(frame: &mut Frame, area: ratatui::layout::Rect) {
     let line = Line::styled(
-        "  Up/Down: modules   Enter: form / next / run   Tab: fields   Esc: cancel   r/l/p: refresh loot ping   Ctrl+C: quit",
+        "  Up/Down: modules   Enter: form / next / run   Tab: fields   Esc: cancel   \
+         c: stop task   r/l/p: refresh loot ping   Ctrl+C: quit",
         Style::new().fg(DIM),
     );
     frame.render_widget(Paragraph::new(line), area);

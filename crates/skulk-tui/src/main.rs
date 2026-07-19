@@ -6,7 +6,7 @@ mod ui;
 
 use std::time::Duration;
 
-use app::{App, Focus, Pending};
+use app::{short, App, Focus, Pending};
 use client::{Client, Sender};
 use contract::{Command, LootQuery};
 use crossterm::event::{Event as CEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -114,6 +114,16 @@ async fn handle_key(app: &mut App, key: KeyEvent, sender: &mut Sender) {
                 send(app, sender, Command::Loot(LootQuery::default()), Pending::Loot, "loot").await
             }
             KeyCode::Char('p') => send(app, sender, Command::Ping, Pending::Invoke, "ping").await,
+            // Cancel is fire-and-forget: the core doesn't ack it directly, the
+            // targeted task's own Result (status Cancelled) arrives later
+            // correlated to its *original* Invoke, already tracked below.
+            KeyCode::Char('c') => match app.running_task() {
+                Some(task) => match sender.send(Command::Cancel { task }).await {
+                    Ok(_) => app.log(format!("> cancel {}", short(task))),
+                    Err(e) => app.log(format!("cancel failed: {e}")),
+                },
+                None => app.log("no running task to cancel".to_string()),
+            },
             _ => {}
         },
         Focus::Form => match key.code {

@@ -13,7 +13,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-use contract::{ActionSpec, LogLevel, ModuleDescriptor, ModuleId, ParamSpec, RawParams, Tactic};
+use contract::{
+    ActionSpec, LogLevel, ModuleDescriptor, ModuleId, ParamSpec, RawParams, Severity, Tactic, ViewLine,
+};
 use module_sdk::{raw_params, ImplantModule, ModuleCtx, ModuleError, ParseParams, PortSpec};
 
 pub struct Services;
@@ -119,6 +121,22 @@ impl ImplantModule for Services {
             if scanned % 16 == 0 || scanned == total {
                 let pct = ((scanned * 100) / total.max(1)) as u8;
                 ctx.progress(Some(pct), format!("{scanned}/{total}"));
+                ctx.view(
+                    "net.services",
+                    vec![
+                        ViewLine { label: "TARGET".into(), value: target.clone(), severity: None },
+                        ViewLine {
+                            label: "SCANNED".into(),
+                            value: format!("{scanned}/{total}"),
+                            severity: None,
+                        },
+                        ViewLine {
+                            label: "FOUND".into(),
+                            value: services.len().to_string(),
+                            severity: if services.is_empty() { None } else { Some(Severity::Medium) },
+                        },
+                    ],
+                );
             }
             if ctx.cancelled() {
                 break;

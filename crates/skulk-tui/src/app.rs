@@ -371,6 +371,14 @@ impl App {
         }
     }
 
+    /// The most recently started task that hasn't finished yet, if any --
+    /// what `c` (cancel) targets. `tasks` has newest first (see
+    /// `upsert_task`'s `insert(0, ..)`), so this is simply the first
+    /// unfinished row.
+    pub fn running_task(&self) -> Option<TaskId> {
+        self.tasks.iter().find(|t| t.status.is_none()).map(|t| t.id)
+    }
+
     fn finish_task(&mut self, id: TaskId, status: TaskStatus) {
         if let Some(t) = self.tasks.iter_mut().find(|t| t.id == id) {
             t.status = Some(status);
@@ -612,6 +620,34 @@ mod tests {
         assert!(app.last_heartbeat.is_none());
         app.apply(Envelope::new(Body::Event(Event::Heartbeat { seq: 1 }), 0));
         assert!(app.last_heartbeat.is_some());
+    }
+
+    #[test]
+    fn running_task_is_the_newest_unfinished_one() {
+        let mut app = App::new("x".into());
+        assert!(app.running_task().is_none(), "nothing started yet");
+
+        let first = TaskId::new();
+        app.apply(Envelope::new(Body::Ack(Ack { task: first }), 0));
+        assert_eq!(app.running_task(), Some(first));
+
+        // A second task starts while the first is still running -- the
+        // newest unfinished one wins (tasks are newest-first).
+        let second = TaskId::new();
+        app.apply(Envelope::new(Body::Ack(Ack { task: second }), 0));
+        assert_eq!(app.running_task(), Some(second));
+
+        app.apply(Envelope::new(
+            Body::Result(TaskResult { task: second, status: TaskStatus::Ok, output: RawParams::default() }),
+            0,
+        ));
+        assert_eq!(app.running_task(), Some(first), "falls back to the still-running one");
+
+        app.apply(Envelope::new(
+            Body::Result(TaskResult { task: first, status: TaskStatus::Cancelled, output: RawParams::default() }),
+            0,
+        ));
+        assert!(app.running_task().is_none(), "both tasks finished");
     }
 }
 

@@ -65,19 +65,20 @@ async fn detects_ssh_and_http() {
         ))
         .await;
 
+    let mut views: Vec<ViewManifest> = Vec::new();
     let result = loop {
         match timeout(Duration::from_secs(8), rx.recv()).await {
-            Ok(Ok(env)) => {
-                if let Body::Result(r) = env.body {
-                    if r.output.0.get("services").is_some() {
-                        break r;
-                    }
-                }
-            }
+            Ok(Ok(env)) => match env.body {
+                Body::Result(r) if r.output.0.get("services").is_some() => break r,
+                Body::Event(Event::ViewManifest(v)) => views.push(v),
+                _ => {}
+            },
             _ => panic!("no detect result"),
         }
     };
     assert_eq!(result.status, TaskStatus::Ok);
+    assert!(!views.is_empty(), "expected at least one ViewManifest while probing");
+    assert!(views.iter().all(|v| v.screen == "net.services"));
 
     let services = result.output.0.get("services").unwrap().as_array().unwrap();
     let ssh = services
