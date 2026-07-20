@@ -98,21 +98,34 @@ async fn handle_key(app: &mut App, key: KeyEvent, sender: &mut Sender) {
     }
 
     match app.focus {
+        // A fetched loot item's content is showing: Up/Down scroll it, Esc
+        // closes it -- takes over these keys before the normal Modules
+        // bindings below (Esc would otherwise mean quit).
+        Focus::Modules if app.loot_content.is_some() => match key.code {
+            KeyCode::Esc => app.close_loot_content(),
+            KeyCode::Up => app.loot_scroll_up(),
+            KeyCode::Down => app.loot_scroll_down(),
+            _ => {}
+        },
         Focus::Modules => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
             KeyCode::Up => app.move_up(),
             KeyCode::Down => app.move_down(),
-            // Open the field-by-field form for the selected module action.
+            // On a loot row, fetch its content; otherwise open the
+            // field-by-field form for the selected module action -- one
+            // tree, one Enter, matching the on-device LCD's menu.
             KeyCode::Enter | KeyCode::Tab => {
-                app.open_form();
+                if let Some(command) = app.fetch_selected_loot() {
+                    send(app, sender, command, Pending::LootFetch, "loot fetch").await;
+                } else {
+                    app.open_form();
+                }
             }
             // Reserved verbs (the free-text command line is gone): quick refreshes.
             KeyCode::Char('r') => {
                 send(app, sender, Command::Describe, Pending::Describe, "describe").await
             }
-            // Move focus into the loot panel and refresh it.
             KeyCode::Char('l') => {
-                app.focus = Focus::Loot;
                 send(app, sender, Command::Loot(LootQuery::default()), Pending::Loot, "loot").await;
             }
             KeyCode::Char('p') => send(app, sender, Command::Ping, Pending::Invoke, "ping").await,
@@ -146,27 +159,6 @@ async fn handle_key(app: &mut App, key: KeyEvent, sender: &mut Sender) {
             }
             KeyCode::Char(c) => app.form_char(c),
             _ => {}
-        },
-        Focus::Loot => match app.loot_content.is_some() {
-            // Viewing one fetched item's content: Up/Down scroll it.
-            true => match key.code {
-                KeyCode::Esc => app.close_loot_content(),
-                KeyCode::Up => app.loot_scroll_up(),
-                KeyCode::Down => app.loot_scroll_down(),
-                _ => {}
-            },
-            // Browsing the list: Up/Down move the cursor, Enter fetches.
-            false => match key.code {
-                KeyCode::Esc => app.focus = Focus::Modules,
-                KeyCode::Up => app.loot_move_up(),
-                KeyCode::Down => app.loot_move_down(),
-                KeyCode::Enter => {
-                    if let Some(command) = app.fetch_selected_loot() {
-                        send(app, sender, command, Pending::LootFetch, "loot fetch").await;
-                    }
-                }
-                _ => {}
-            },
         },
     }
 }

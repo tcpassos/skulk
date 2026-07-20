@@ -311,11 +311,20 @@ pass-throughs for consumers that bypass the wire (same exemption as
 dispatch handlers use them too, so the two paths can't disagree. `client`
 gained `loot_fetch()`; the CLI's `loot` verb now doubles as `skulk loot
 <key>` (prints the content, or a `(binary, N B, ...)` note if it isn't
-UTF-8) alongside the existing listing form; `skulk-tui` gained `Focus::Loot`
-(press `l` to browse the LOOT panel, Enter to fetch, Esc to back out) with
-fetched content shown in the larger middle panel it shares with
-DETAIL/FORM. On the LCD specifically — the part that most needed this, to
-not fall behind RaspyJack's own loot/log browsing — loot entries are a
+UTF-8) alongside the existing listing form. `skulk-tui`'s loot browsing
+first shipped as a separate `Focus::Loot` panel, but that gave the TUI and
+the LCD two different navigation metaphors for the same feature and that
+was confusing in practice (a live user report) — it's now unified the same
+way the LCD works: loot lives in the MODULES tree as a trailing "loot"
+group (`Row::Loot`, `App::set_loot`/`note_loot`, same rebuild-on-change
+design as the LCD's `Menu`), Up/Down/Enter navigate everything (module
+actions and loot alike) with no separate mode, and `l` is back to being a
+plain manual refresh (no focus switch). The small LOOT panel is now a
+passive, always-visible mirror of the same list — no selection of its own.
+Fetched content still shows in the larger middle panel shared with
+DETAIL/FORM, opened whenever `App.loot_content` is `Some` regardless of
+`Focus`. On the LCD specifically — the part that most needed this, to not
+fall behind RaspyJack's own loot/log browsing — loot entries are a
 live-updating trailing "loot" group *inside* the existing `Menu` (no new
 button/screen-entry needed; `Menu::set_loot`/`note_loot` rebuild it, backed
 by an `Engine::loot_query()` backfill at `run_app` startup plus live

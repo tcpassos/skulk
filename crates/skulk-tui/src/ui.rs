@@ -39,7 +39,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     // share the larger panel instead of squeezing into the small LOOT list.
     if app.focus == Focus::Form {
         form_view(frame, app, middle[0]);
-    } else if app.focus == Focus::Loot && app.loot_content.is_some() {
+    } else if app.loot_content.is_some() {
         loot_content_view(frame, app, middle[0]);
     } else {
         detail(frame, app, middle[0]);
@@ -200,6 +200,15 @@ fn modules(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
                 }
                 ListItem::new(Line::styled(text, style))
             }
+            Row::Loot(entry) => {
+                let text = format!("   {}  {:?}  {} B", entry.key, entry.kind, entry.size);
+                let style = if i == app.selected {
+                    Style::new().fg(ACCENT).add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::new()
+                };
+                ListItem::new(Line::styled(text, style))
+            }
         })
         .collect();
     frame.render_widget(List::new(items).block(Block::bordered().title(" MODULES ")), area);
@@ -227,29 +236,21 @@ fn tasks(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     frame.render_widget(List::new(items).block(Block::bordered().title(" TASKS ")), area);
 }
 
+/// A passive mirror of the loot index -- browsing/fetching happens through
+/// the MODULES tree above (a "loot" group; see `App::rebuild_loot_rows`),
+/// same as everything else, so this panel has no selection of its own.
 fn loot(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let focused = app.focus == Focus::Loot;
     let items: Vec<ListItem> = app
         .loot
         .iter()
-        .enumerate()
-        .map(|(i, e)| {
-            let text = format!("{}  {:?}  {} B", e.key, e.kind, e.size);
-            let style = if focused && i == app.loot_selected {
-                Style::new().fg(ACCENT).add_modifier(Modifier::REVERSED)
-            } else {
-                Style::new()
-            };
-            ListItem::new(Line::styled(text, style))
-        })
+        .map(|e| ListItem::new(Line::raw(format!("{}  {:?}  {} B", e.key, e.kind, e.size))))
         .collect();
-    let title = if focused { " LOOT (Enter: view, Esc: back) " } else { " LOOT (l: browse) " };
-    frame.render_widget(List::new(items).block(Block::bordered().title(title)), area);
+    frame.render_widget(List::new(items).block(Block::bordered().title(" LOOT ")), area);
 }
 
-/// One fetched loot item's content, in place of the DETAIL/FORM panel while
-/// `Focus::Loot` has something open. Best-effort UTF-8; anything else just
-/// says so rather than dumping raw bytes.
+/// One fetched loot item's content, in place of the DETAIL/FORM panel.
+/// Best-effort UTF-8; anything else just says so rather than dumping raw
+/// bytes.
 fn loot_content_view(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let Some(content) = &app.loot_content else { return };
     let mut lines = vec![
@@ -285,7 +286,7 @@ fn command_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             s
         }
         None => {
-            "Enter: fill the selected module's form    r: refresh   l: loot   p: ping   c: stop task"
+            "Enter: fill the form / view loot    r: refresh   l: refresh loot   p: ping   c: stop task"
                 .to_string()
         }
     };
@@ -298,8 +299,8 @@ fn command_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
 fn footer(frame: &mut Frame, area: ratatui::layout::Rect) {
     let line = Line::styled(
-        "  Up/Down: modules   Enter: form / next / run   Tab: fields   Esc: cancel   \
-         c: stop task   r: refresh   l: loot (Enter: view)   p: ping   Ctrl+C: quit",
+        "  Up/Down: tree   Enter: form / run / view loot   Tab: fields   Esc: cancel/back   \
+         c: stop task   r: refresh   l: refresh loot   p: ping   Ctrl+C: quit",
         Style::new().fg(DIM),
     );
     frame.render_widget(Paragraph::new(line), area);

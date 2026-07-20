@@ -9,9 +9,6 @@ use contract::*;
 pub enum Focus {
     Modules,
     Form,
-    /// Browsing the loot list, or (once `App::loot_content` is `Some`)
-    /// viewing one fetched item's content.
-    Loot,
 }
 
 /// What a sent command is, so its correlated Result can be routed.
@@ -84,7 +81,10 @@ pub struct TaskRow {
     pub note: String,
 }
 
-/// One row in the left module tree.
+/// One row in the left module tree. Loot lives in the same tree as a
+/// trailing "loot" group (see `App::set_loot`/`note_loot`) instead of a
+/// separate panel/focus — one browsable list, one set of keys, matching the
+/// on-device LCD menu's design instead of diverging from it.
 pub enum Row {
     Group(String),
     Module {
@@ -94,6 +94,7 @@ pub enum Row {
         description: Option<String>,
         params: Vec<ParamSpec>,
     },
+    Loot(LootEntry),
 }
 
 pub struct App {
@@ -108,10 +109,11 @@ pub struct App {
     pub tasks: Vec<TaskRow>,
     pub events: Vec<String>,
     pub loot: Vec<LootEntry>,
-    /// Index of the selected row while `focus == Focus::Loot`.
-    pub loot_selected: usize,
-    /// The fetched content of one loot item, once opened from the list.
-    /// `None` means the loot panel shows the list, not a viewer.
+    /// How many of `rows` are the static manifest-derived rows, i.e. where
+    /// the loot section (if any) starts — see `App::rebuild_loot_rows`.
+    module_row_count: usize,
+    /// The fetched content of one loot item, once opened from the tree.
+    /// `None` means no viewer is open.
     pub loot_content: Option<LootContent>,
     /// Scroll offset (in lines) while viewing `loot_content`.
     pub loot_scroll: u16,
@@ -138,7 +140,7 @@ impl App {
             tasks: Vec::new(),
             events: Vec::new(),
             loot: Vec::new(),
-            loot_selected: 0,
+            module_row_count: 0,
             loot_content: None,
             loot_scroll: 0,
             last_heartbeat: None,
@@ -187,19 +189,19 @@ impl App {
                 });
             }
         }
+        self.module_row_count = rows.len();
         self.rows = rows;
-        self.selected = self
-            .rows
-            .iter()
-            .position(|r| matches!(r, Row::Module { .. }))
-            .unwrap_or(0);
+        // Re-append the loot section (a manifest refresh doesn't discard
+        // loot the operator already fetched/listed).
+        self.rebuild_loot_rows();
+        self.selected = self.rows.iter().position(|r| !matches!(r, Row::Group(_))).unwrap_or(0);
     }
 
     pub fn move_down(&mut self) {
         let mut i = self.selected;
         while i + 1 < self.rows.len() {
             i += 1;
-            if matches!(self.rows[i], Row::Module { .. }) {
+            if !matches!(self.rows[i], Row::Group(_)) {
                 self.selected = i;
                 break;
             }
@@ -210,16 +212,25 @@ impl App {
         let mut i = self.selected;
         while i > 0 {
             i -= 1;
-            if matches!(self.rows[i], Row::Module { .. }) {
+            if !matches!(self.rows[i], Row::Group(_)) {
                 self.selected = i;
                 break;
             }
         }
     }
 
-    /// The `Row` under the cursor, if it is a module (for the detail panel).
+    /// The `Row` under the cursor, if it is a module (for the detail panel
+    /// and opening a form).
     pub fn selected_row(&self) -> Option<&Row> {
         self.rows.get(self.selected).filter(|r| matches!(r, Row::Module { .. }))
+    }
+
+    /// The `LootEntry` under the cursor, if it is a loot row.
+    pub fn selected_loot(&self) -> Option<&LootEntry> {
+        match self.rows.get(self.selected) {
+            Some(Row::Loot(entry)) => Some(entry),
+            _ => None,
+        }
     }
 
     /// Open an editable form for the module action under the cursor and focus it,
@@ -304,23 +315,13 @@ impl App {
         }
     }
 
-    pub fn loot_move_down(&mut self) {
-        if self.loot_selected + 1 < self.loot.len() {
-            self.loot_selected += 1;
-        }
-    }
-
-    pub fn loot_move_up(&mut self) {
-        self.loot_selected = self.loot_selected.saturating_sub(1);
-    }
-
-    /// Fetch the selected loot entry's content — `None` if the list is empty.
+    /// Fetch the loot entry under the cursor — `None` if it isn't one.
     pub fn fetch_selected_loot(&self) -> Option<Command> {
-        let key = self.loot.get(self.loot_selected)?.key.clone();
+        let key = self.selected_loot()?.key.clone();
         Some(Command::LootFetch { key })
     }
 
-    /// Close the content viewer, back to the loot list (stays in `Focus::Loot`).
+    /// Close the content viewer, back to the tree.
     pub fn close_loot_content(&mut self) {
         self.loot_content = None;
         self.loot_scroll = 0;
@@ -332,6 +333,40 @@ impl App {
 
     pub fn loot_scroll_up(&mut self) {
         self.loot_scroll = self.loot_scroll.saturating_sub(1);
+    }
+
+    /// Replace the whole loot backlog (a fresh `Command::Loot` listing) and
+    /// rebuild the trailing "loot" group from it.
+    pub fn set_loot(&mut self, entries: Vec<LootEntry>) {
+        self.loot = entries;
+        self.rebuild_loot_rows();
+    }
+
+    /// Fold in one freshly-stored item (`Event::LootStored`): updates it in
+    /// place if the key is already known (a module can overwrite its own
+    /// key), otherwise appends.
+    pub fn note_loot(&mut self, entry: LootEntry) {
+        match self.loot.iter_mut().find(|e| e.key == entry.key) {
+            Some(existing) => *existing = entry,
+            None => self.loot.push(entry),
+        }
+        self.rebuild_loot_rows();
+    }
+
+    /// Rebuild the trailing "loot" group from `self.loot`, keeping the
+    /// static module rows before it untouched. Only re-homes the cursor if
+    /// it became invalid (past the end, or now sitting on a group header
+    /// because the section shrank) — mirrors `lcd_render::Menu`'s own
+    /// rebuild, the same design this unifies with.
+    fn rebuild_loot_rows(&mut self) {
+        self.rows.truncate(self.module_row_count);
+        if !self.loot.is_empty() {
+            self.rows.push(Row::Group("loot".to_string()));
+            self.rows.extend(self.loot.iter().cloned().map(Row::Loot));
+        }
+        if self.selected >= self.rows.len() || matches!(self.rows.get(self.selected), Some(Row::Group(_))) {
+            self.selected = self.rows.iter().position(|r| !matches!(r, Row::Group(_))).unwrap_or(0);
+        }
     }
 
     pub fn log(&mut self, line: String) {
@@ -360,8 +395,9 @@ impl App {
                 }
                 Some(Pending::Loot) => {
                     if let Ok(list) = serde_json::from_value::<Vec<LootEntry>>(r.output.0.clone()) {
-                        self.loot = list;
-                        self.log(format!("loot: {} item(s)", self.loot.len()));
+                        let count = list.len();
+                        self.set_loot(list);
+                        self.log(format!("loot: {count} item(s)"));
                     }
                 }
                 Some(Pending::LootFetch) => {
@@ -401,9 +437,7 @@ impl App {
                 }
                 Event::LootStored { key, kind, size } => {
                     self.log(format!("+ loot {key} ({kind:?}, {size} B)"));
-                    if !self.loot.iter().any(|e| e.key == key) {
-                        self.loot.push(LootEntry { key, kind, size });
-                    }
+                    self.note_loot(LootEntry { key, kind, size });
                 }
                 Event::Heartbeat { .. } => self.last_heartbeat = Some(Instant::now()),
                 Event::Sensor { source, .. } => self.log(format!("sensor {source}")),
@@ -715,25 +749,52 @@ mod tests {
     }
 
     #[test]
-    fn loot_navigation_clamps_at_both_ends() {
+    fn loot_rows_append_after_the_modules_and_are_navigable() {
         let mut app = App::new("x".into());
-        app.loot = sample_loot();
-        assert_eq!(app.loot_selected, 0);
-        app.loot_move_up(); // already at 0: stays put
-        assert_eq!(app.loot_selected, 0);
-        app.loot_move_down();
-        assert_eq!(app.loot_selected, 1);
-        app.loot_move_down(); // already at the last row: stays put
-        assert_eq!(app.loot_selected, 1);
-        app.loot_move_up();
-        assert_eq!(app.loot_selected, 0);
+        app.set_manifest(sample_manifest());
+        app.set_loot(vec![LootEntry { key: "a".into(), kind: LootKind::Other, size: 3 }]);
+        // 4 rows from sample_manifest (2 groups + 2 modules), then Group("loot") + the entry.
+        assert_eq!(app.rows.len(), 6);
+        assert!(matches!(&app.rows[4], Row::Group(g) if g == "loot"));
+        assert!(matches!(&app.rows[5], Row::Loot(e) if e.key == "a"));
+
+        // move_down from the last module row lands on the loot row (groups
+        // are still skipped, but loot rows are now selectable like modules).
+        app.selected = 3; // wifi.deauth start, the last module row
+        app.move_down();
+        assert_eq!(app.selected, 5);
+        assert!(app.selected_loot().is_some());
+    }
+
+    #[test]
+    fn note_loot_updates_an_existing_key_in_place_rather_than_duplicating() {
+        let mut app = App::new("x".into());
+        app.note_loot(LootEntry { key: "a".into(), kind: LootKind::Other, size: 3 });
+        app.note_loot(LootEntry { key: "a".into(), kind: LootKind::Other, size: 9 });
+        let loot_rows: Vec<&LootEntry> =
+            app.rows.iter().filter_map(|r| match r { Row::Loot(e) => Some(e), _ => None }).collect();
+        assert_eq!(loot_rows.len(), 1, "same key updates in place, doesn't duplicate");
+        assert_eq!(loot_rows[0].size, 9);
+    }
+
+    #[test]
+    fn cursor_snaps_to_a_valid_row_if_the_loot_section_it_was_on_disappears() {
+        let mut app = App::new("x".into());
+        app.set_manifest(sample_manifest());
+        app.set_loot(vec![LootEntry { key: "a".into(), kind: LootKind::Other, size: 3 }]);
+        app.selected = 5; // the loot row
+        app.set_loot(vec![]); // loot cleared (e.g. a wipe) -- section disappears
+        assert!(app.selected < app.rows.len());
+        assert!(!matches!(app.rows.get(app.selected), Some(Row::Group(_))));
     }
 
     #[test]
     fn fetch_selected_loot_targets_the_row_under_the_cursor() {
         let mut app = App::new("x".into());
-        app.loot = sample_loot();
-        app.loot_move_down(); // -> "b"
+        app.set_loot(sample_loot());
+        // set_loot already snapped the cursor onto "a" (the first selectable
+        // row); one more move_down reaches "b".
+        app.move_down();
         match app.fetch_selected_loot() {
             Some(Command::LootFetch { key }) => assert_eq!(key, "b"),
             other => panic!("expected LootFetch{{key: \"b\"}}, got {other:?}"),
