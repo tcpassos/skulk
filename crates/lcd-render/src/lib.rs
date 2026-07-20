@@ -411,6 +411,13 @@ const REPEAT_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_milli
 /// How much faster each successive tick gets, until the floor above.
 const REPEAT_ACCEL_STEP: std::time::Duration = std::time::Duration::from_millis(12);
 
+/// How many loot entries the menu's live list keeps, newest first (see
+/// `engine::loot`'s ordering). The tiny screen has no room for an unbounded,
+/// ever-growing list; deeper history is a `skulk loot --prefix ...` job, not
+/// this live view's. Shared by the startup backfill query (below) and
+/// `menu::Menu::note_loot`'s cap on live `Event::LootStored` growth.
+pub(crate) const RECENT_LOOT_LIMIT: usize = 20;
+
 impl HeldButton {
     fn new(peripheral: String, action: NavAction) -> Self {
         Self {
@@ -452,8 +459,13 @@ pub async fn run_app<D>(
     let mut app = App::new(manifest);
     // Backfill whatever loot is already stored -- Event::LootStored (below)
     // keeps this current from here on. Direct in-process call (like
-    // `manifest()`), no envelope round-trip needed.
-    app.set_loot_backlog(engine.loot_query(&LootQuery::default()).await);
+    // `manifest()`), no envelope round-trip needed. Capped: the tiny screen
+    // has no room for an unbounded, ever-growing list, and the engine's
+    // newest-first ordering means a cap keeps the most recent items, not
+    // arbitrary ones -- deeper history is a `skulk loot --prefix ...` job.
+    app.set_loot_backlog(
+        engine.loot_query(&LootQuery { limit: Some(RECENT_LOOT_LIMIT as u32), ..Default::default() }).await,
+    );
     let mut hud = Hud::new(hud_slots.clone());
     let icons = renderer.load_hud_icons(&hud_slots);
     let mut rx = engine.subscribe();

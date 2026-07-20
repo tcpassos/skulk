@@ -158,7 +158,11 @@ fn to_loot_err<E: std::fmt::Display>(e: E) -> LootError {
     LootError(e.to_string())
 }
 
-/// Apply prefix/kind/limit filtering, sorted by key, shared by both stores.
+/// Apply prefix/kind/limit filtering, shared by both stores. Sorted by key
+/// *descending* — newest-first for the `module_sdk::timestamped_key`
+/// convention (a millisecond epoch suffix sorts newest-highest as a plain
+/// string too), so `limit` naturally keeps the most recent items instead of
+/// the oldest.
 fn filter(
     items: impl Iterator<Item = (String, LootKind, u64)>,
     query: &LootQuery,
@@ -170,7 +174,7 @@ fn filter(
         })
         .map(|(key, kind, size)| LootEntry { key, kind, size })
         .collect();
-    out.sort_by(|a, b| a.key.cmp(&b.key));
+    out.sort_by(|a, b| b.key.cmp(&a.key));
     if let Some(limit) = query.limit {
         out.truncate(limit as usize);
     }

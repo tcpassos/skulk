@@ -231,6 +231,24 @@ pub fn raw_params<T: Serialize>(value: &T) -> Result<RawParams, ModuleError> {
     Ok(RawParams(serde_json::to_value(value).map_err(ModuleError::from)?))
 }
 
+/// Build a loot key ending in a sortable timestamp: `<prefix>/<millis-since-epoch>`.
+/// Every call to `store_loot` with a key built this way gets its own entry
+/// instead of overwriting one fixed key — `Command::Loot{prefix}` can still
+/// reach every past snapshot, not just the latest, and the engine's newest-
+/// first ordering (see `engine::loot`) shows the most recent one first.
+/// Millisecond epoch timestamps stay the same digit width for centuries, so
+/// plain string sorting already sorts chronologically — no zero-padding
+/// needed. Prefer this over a fixed key for anything an operator might want
+/// history of; keep a fixed key only for state that's meaningless to keep
+/// more than one of.
+pub fn timestamped_key(prefix: &str) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{prefix}/{millis}")
+}
+
 /// A flexible port specification a network module can accept as a parameter: a
 /// spec string (`"1-1024"`, `"22,80,443"`, `"80,1000-1010"`), an explicit array
 /// (`[22, 80, 443]`), or a single number (`80`).
@@ -272,4 +290,31 @@ fn parse_port(s: &str) -> Result<u16, ModuleError> {
     s.trim()
         .parse()
         .map_err(|_| ModuleError::InvalidParams(format!("bad port '{}'", s.trim())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timestamped_key_is_prefixed_and_sortable() {
+        let a = timestamped_key("sysinfo");
+        assert!(a.starts_with("sysinfo/"));
+        let suffix = a.strip_prefix("sysinfo/").unwrap();
+        assert!(suffix.chars().all(|c| c.is_ascii_digit()), "timestamp suffix must be all digits: {suffix}");
+    }
+
+    #[test]
+    fn timestamped_key_keeps_a_multi_segment_prefix_intact() {
+        let key = timestamped_key("dns/axfr/example.com/ns1");
+        assert!(key.starts_with("dns/axfr/example.com/ns1/"));
+    }
+
+    #[test]
+    fn successive_calls_sort_chronologically_as_plain_strings() {
+        let first = timestamped_key("x");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let second = timestamped_key("x");
+        assert!(first < second, "later timestamp must sort after the earlier one as a string");
+    }
 }

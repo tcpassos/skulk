@@ -298,7 +298,14 @@ async fn try_axfr(
                 Severity::High,
                 format!("AXFR zone transfer succeeded against {server} for {zone} — {count} records leaked"),
             );
-            let key = format!("dns/axfr/{}/{}", zone.trim_end_matches('.'), label.trim_end_matches('.'));
+            // Timestamped, not a fixed per-target key: re-transferring the
+            // same zone keeps its own snapshot instead of overwriting the
+            // last one.
+            let key = module_sdk::timestamped_key(&format!(
+                "dns/axfr/{}/{}",
+                zone.trim_end_matches('.'),
+                label.trim_end_matches('.')
+            ));
             let bytes = serde_json::to_vec(&records).unwrap_or_default();
             if let Err(e) = ctx.store_loot(LootKind::Other, &key, bytes).await {
                 ctx.log(LogLevel::Warn, format!("failed to store AXFR loot for {server}: {e}"));

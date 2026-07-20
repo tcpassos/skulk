@@ -143,11 +143,19 @@ impl Menu {
 
     /// Fold in one freshly-stored item (`Event::LootStored`): updates it in
     /// place if the key is already known (a module can overwrite its own
-    /// key), otherwise appends.
+    /// key), otherwise inserts it at the front -- `self.loot` is kept
+    /// newest-first (matching the engine's query order, see
+    /// `Menu::set_loot`), so a brand-new item belongs at the top, not the
+    /// bottom. Caps at [`crate::RECENT_LOOT_LIMIT`] so a long-running
+    /// daemon's loot list can't grow forever; older entries are still reachable via
+    /// `skulk loot --prefix ...`, just not in this live view.
     pub fn note_loot(&mut self, entry: LootEntry) {
         match self.loot.iter_mut().find(|e| e.key == entry.key) {
             Some(existing) => *existing = entry,
-            None => self.loot.push(entry),
+            None => {
+                self.loot.insert(0, entry);
+                self.loot.truncate(crate::RECENT_LOOT_LIMIT);
+            }
         }
         self.rebuild_loot_rows();
     }
@@ -670,6 +678,30 @@ mod tests {
             menu.rows().iter().filter_map(|r| match r { Row::Loot(e) => Some(e), _ => None }).collect();
         assert_eq!(loot_rows.len(), 1, "same key updates in place, doesn't duplicate");
         assert_eq!(loot_rows[0].size, 9);
+    }
+
+    fn loot_rows(menu: &Menu) -> Vec<&LootEntry> {
+        menu.rows().iter().filter_map(|r| match r { Row::Loot(e) => Some(e), _ => None }).collect()
+    }
+
+    #[test]
+    fn note_loot_inserts_new_entries_at_the_front() {
+        let mut menu = Menu::from_manifest(&sample_manifest());
+        menu.set_loot(vec![LootEntry { key: "old".into(), kind: contract::LootKind::Other, size: 1 }]);
+        menu.note_loot(LootEntry { key: "new".into(), kind: contract::LootKind::Other, size: 2 });
+        let keys: Vec<&str> = loot_rows(&menu).iter().map(|e| e.key.as_str()).collect();
+        assert_eq!(keys, vec!["new", "old"], "a brand-new item lands newest-first");
+    }
+
+    #[test]
+    fn note_loot_caps_the_list_at_the_recent_limit() {
+        let mut menu = Menu::from_manifest(&sample_manifest());
+        for i in 0..crate::RECENT_LOOT_LIMIT + 5 {
+            menu.note_loot(LootEntry { key: format!("k{i}"), kind: contract::LootKind::Other, size: 1 });
+        }
+        let rows = loot_rows(&menu);
+        assert_eq!(rows.len(), crate::RECENT_LOOT_LIMIT, "old entries fall off once the cap is hit");
+        assert_eq!(rows[0].key, format!("k{}", crate::RECENT_LOOT_LIMIT + 4));
     }
 
     #[test]

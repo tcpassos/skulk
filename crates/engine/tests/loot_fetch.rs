@@ -44,11 +44,16 @@ async fn fetches_the_bytes_of_an_existing_key() {
     // Drain the invoke's own Result before issuing the fetch.
     next_body(&mut rx).await;
 
-    engine.handle(command(Command::LootFetch { key: "sysinfo/last".to_string() })).await;
+    // sys.info stores under a timestamped key (module_sdk::timestamped_key),
+    // not a fixed one -- look up whatever key it actually used.
+    let entries = engine.loot_query(&LootQuery { prefix: Some("sysinfo/".to_string()), ..Default::default() }).await;
+    let key = entries.first().expect("sys.info should have stored one loot entry").key.clone();
+
+    engine.handle(command(Command::LootFetch { key: key.clone() })).await;
     match next_body(&mut rx).await {
         Body::Result(r) => {
             let content: LootContent = serde_json::from_value(r.output.0).unwrap();
-            assert_eq!(content.key, "sysinfo/last");
+            assert_eq!(content.key, key);
             assert_eq!(content.kind, LootKind::Telemetry);
             assert!(!content.bytes.is_empty());
             // The stored bytes are the sysinfo JSON -- decodes back cleanly.

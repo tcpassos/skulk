@@ -6,9 +6,9 @@ mod ui;
 
 use std::time::Duration;
 
-use app::{short, App, Focus, Pending};
+use app::{recent_loot_query, short, App, Focus, Pending};
 use client::{Client, Sender};
-use contract::{Command, LootQuery};
+use contract::Command;
 use crossterm::event::{Event as CEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
 use tokio::sync::mpsc;
@@ -49,7 +49,7 @@ async fn main() {
     app.log("connected".to_string());
 
     // Prime the loot panel with whatever is already stored on the device.
-    if let Ok(id) = sender.send(Command::Loot(LootQuery::default())).await {
+    if let Ok(id) = sender.send(Command::Loot(recent_loot_query())).await {
         app.pending.insert(id, Pending::Loot);
     }
 
@@ -126,7 +126,7 @@ async fn handle_key(app: &mut App, key: KeyEvent, sender: &mut Sender) {
                 send(app, sender, Command::Describe, Pending::Describe, "describe").await
             }
             KeyCode::Char('l') => {
-                send(app, sender, Command::Loot(LootQuery::default()), Pending::Loot, "loot").await;
+                send(app, sender, Command::Loot(recent_loot_query()), Pending::Loot, "loot").await;
             }
             KeyCode::Char('p') => send(app, sender, Command::Ping, Pending::Invoke, "ping").await,
             // Cancel is fire-and-forget: the core doesn't ack it directly, the

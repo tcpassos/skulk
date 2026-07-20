@@ -43,3 +43,35 @@ async fn redb_persists_across_reopen() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn query_lists_newest_key_first_and_limit_keeps_the_newest() {
+    let path = std::env::temp_dir().join(format!("redbloot-test-order-{}.redb", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let store = RedbLoot::open(&path).unwrap();
+
+    // Keys as `module_sdk::timestamped_key` would produce them -- a shared
+    // prefix, ascending timestamp suffix.
+    for ts in ["1000", "2000", "3000"] {
+        store.put(LootKind::Telemetry, &format!("sysinfo/{ts}"), b"x".to_vec()).await.unwrap();
+    }
+
+    let all = store.query(&LootQuery::default()).await.unwrap();
+    assert_eq!(
+        all.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(),
+        vec!["sysinfo/3000", "sysinfo/2000", "sysinfo/1000"],
+        "newest (highest timestamp suffix) first"
+    );
+
+    let capped = store
+        .query(&LootQuery { limit: Some(2), ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(
+        capped.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(),
+        vec!["sysinfo/3000", "sysinfo/2000"],
+        "limit keeps the most recent entries, not the oldest"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}

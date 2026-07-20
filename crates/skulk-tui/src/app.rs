@@ -19,6 +19,18 @@ pub enum Pending {
     Invoke,
 }
 
+/// How many loot entries the tree's live list keeps, newest first (matching
+/// `engine::loot`'s query ordering). Deeper history is a `skulk loot
+/// --prefix ...` job, not this live view's.
+pub const RECENT_LOOT_LIMIT: u32 = 20;
+
+/// The `Command::Loot` query the tree's ambient (auto-refreshed) view always
+/// uses -- capped, unlike a `skulk loot` the operator ran by hand and
+/// presumably wants unbounded.
+pub fn recent_loot_query() -> LootQuery {
+    LootQuery { limit: Some(RECENT_LOOT_LIMIT), ..Default::default() }
+}
+
 /// One editable field of a [`Form`], derived from an action's [`ParamSpec`].
 /// The `default`/`example` are carried as *hints* only: the field starts empty
 /// (many declared defaults are prose like `"common ports"`, not literal input),
@@ -344,11 +356,19 @@ impl App {
 
     /// Fold in one freshly-stored item (`Event::LootStored`): updates it in
     /// place if the key is already known (a module can overwrite its own
-    /// key), otherwise appends.
+    /// key), otherwise inserts it at the front -- `self.loot` is kept
+    /// newest-first (matching the engine's query order, see `App::set_loot`),
+    /// so a brand-new item belongs at the top, not the bottom. Caps at
+    /// [`RECENT_LOOT_LIMIT`] so a long-running session's loot list can't
+    /// grow forever; older entries are still reachable via `skulk loot
+    /// --prefix ...`, just not in this live view.
     pub fn note_loot(&mut self, entry: LootEntry) {
         match self.loot.iter_mut().find(|e| e.key == entry.key) {
             Some(existing) => *existing = entry,
-            None => self.loot.push(entry),
+            None => {
+                self.loot.insert(0, entry);
+                self.loot.truncate(RECENT_LOOT_LIMIT as usize);
+            }
         }
         self.rebuild_loot_rows();
     }
@@ -420,7 +440,7 @@ impl App {
                         self.log(format!("{tag} task {} {:?}: {out}", short(r.task), r.status));
                     }
                     // A task may have stored loot; refresh the panel.
-                    self.outbox.push((Command::Loot(LootQuery::default()), Pending::Loot));
+                    self.outbox.push((Command::Loot(recent_loot_query()), Pending::Loot));
                 }
             },
             Body::Error(e) => {
@@ -746,6 +766,29 @@ mod tests {
             LootEntry { key: "a".into(), kind: LootKind::Telemetry, size: 3 },
             LootEntry { key: "b".into(), kind: LootKind::Other, size: 5 },
         ]
+    }
+
+    #[test]
+    fn note_loot_inserts_new_entries_at_the_front() {
+        let mut app = App::new("x".into());
+        app.set_loot(vec![LootEntry { key: "old".into(), kind: LootKind::Other, size: 1 }]);
+        app.note_loot(LootEntry { key: "new".into(), kind: LootKind::Other, size: 2 });
+        assert_eq!(
+            app.loot.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(),
+            vec!["new", "old"],
+            "a brand-new item lands newest-first, matching the engine's query order"
+        );
+    }
+
+    #[test]
+    fn note_loot_caps_the_list_at_the_recent_limit() {
+        let mut app = App::new("x".into());
+        for i in 0..RECENT_LOOT_LIMIT + 5 {
+            app.note_loot(LootEntry { key: format!("k{i}"), kind: LootKind::Other, size: 1 });
+        }
+        assert_eq!(app.loot.len(), RECENT_LOOT_LIMIT as usize, "old entries fall off once the cap is hit");
+        // The very last one noted is still the newest-first entry.
+        assert_eq!(app.loot[0].key, format!("k{}", RECENT_LOOT_LIMIT + 4));
     }
 
     #[test]

@@ -343,6 +343,29 @@ via the new `apply_nav_outcome` helper it shares with the existing
 Invoke-dispatch path), preserving the "pure state machine" split the
 menu/form code already had.
 
+Loot history: `sys.info get` and `dns.records enum` used to store under a
+fixed key (`"sysinfo/last"`, `"dns/axfr/<zone>/<label>"`), so a second run
+silently overwrote the first — no history, ever. They now build their key
+with the new `module_sdk::timestamped_key(prefix)` (`<prefix>/<millis-since-
+epoch>`), so every run keeps its own loot entry; `Command::Loot{prefix:
+...}` (or the CLI's `skulk loot --prefix ...`) already reaches the full
+history with zero engine/protocol changes, since millisecond-epoch suffixes
+stay the same digit width for centuries and so sort chronologically as
+plain strings with no padding needed. `engine::loot`'s shared `filter()` now
+sorts **descending** (newest-first) instead of ascending, so `LootQuery.limit`
+naturally keeps the most recent items instead of the oldest. Both ambient
+UIs (the TUI's MODULES tree, the LCD's `Menu`) cap their auto-refreshed loot
+list at a `RECENT_LOOT_LIMIT` (20) for exactly this reason — a long-running
+daemon's loot would otherwise grow the on-screen list forever — and a
+brand-new `Event::LootStored` item is now inserted at the *front* of the
+list (not pushed to the back), matching that newest-first order; deeper
+history past the cap is still fully reachable, just via `skulk loot --prefix
+...` on a real terminal rather than the constrained on-device views. A
+grouped/drill-down browse (family → individual snapshots, one more
+navigation level) was considered and deliberately deferred — no module
+today produces loot at a volume where the flat capped list actually falls
+short, so building that now would be solving a hypothetical problem.
+
 Also still open: whether the TUI's own colors should move onto the same
 `lcd_render::Theme` system instead of `skulk-tui/src/ui.rs`'s hardcoded
 consts. Cross-compiling

@@ -66,12 +66,13 @@ async fn client_describes_and_invokes() {
     }
     assert!(saw_progress, "the client should have observed progress events");
 
-    // The invoke stored loot; the typed loot() helper should see it.
+    // The invoke stored loot (a timestamped key, not a fixed one -- see
+    // module_sdk::timestamped_key); the typed loot() helper should see it.
     let loot = client.loot(LootQuery::default()).await.unwrap();
-    assert!(loot.iter().any(|e| e.key == "sysinfo/last"));
+    let entry = loot.iter().find(|e| e.key.starts_with("sysinfo/")).expect("sysinfo loot should be listed");
 
     // And its actual content is fetchable by key.
-    let content = client.loot_fetch("sysinfo/last").await.unwrap();
+    let content = client.loot_fetch(entry.key.clone()).await.unwrap();
     assert_eq!(content.kind, LootKind::Telemetry);
     assert!(serde_json::from_slice::<serde_json::Value>(&content.bytes).is_ok());
 }
