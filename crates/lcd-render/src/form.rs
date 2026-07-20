@@ -4,11 +4,15 @@
 //! `embedded-graphics`, same split as [`crate::menu`]; the module ships no UI
 //! code, only its declared param types drive which widget appears.
 //!
-//! Navigation folds onto the same four nav actions the menu uses. A widget may
-//! have several *edit points* (a host has four octets); Select walks forward
-//! through every edit point of the current field, then to the next field, and
+//! Navigation folds onto the menu's nav actions. A widget may have several
+//! *edit points* (a host has four octets); Select walks forward through
+//! every edit point of the current field, then to the next field, and
 //! finally submits; Back walks the same path in reverse and, at the very
-//! start, cancels. Up/Down edit whatever edit point is current.
+//! start, cancels. Up/Down edit whatever edit point is current. Left/Right
+//! (bound only on boards with a 5-way joystick, not required) walk that same
+//! path but stop dead at the first/last edit point instead of
+//! cancelling/submitting — pure cursor movement, for freely browsing fields
+//! without accidentally submitting or backing out of the form.
 
 use contract::{Command, Invoke, ModuleId, ParamSpec, RawParams};
 use serde_json::{Map, Value};
@@ -286,6 +290,31 @@ impl Form {
         Back::Cancel
     }
 
+    /// Right: the same forward walk as [`Form::select`], but stops at the
+    /// last edit point of the last field instead of submitting — pure cursor
+    /// movement for a 5-way joystick's right press, no side effect.
+    pub fn right(&mut self) {
+        if self.fields[self.cursor].widget.advance() {
+            return;
+        }
+        if self.cursor + 1 < self.fields.len() {
+            self.cursor += 1;
+            self.fields[self.cursor].widget.reset_cursor(false);
+        }
+    }
+
+    /// Left: the same backward walk as [`Form::back`], but stops at the
+    /// first edit point of the first field instead of cancelling.
+    pub fn left(&mut self) {
+        if self.fields[self.cursor].widget.retreat() {
+            return;
+        }
+        if self.cursor > 0 {
+            self.cursor -= 1;
+            self.fields[self.cursor].widget.reset_cursor(true);
+        }
+    }
+
     fn to_invoke(&self) -> Command {
         let mut map = Map::new();
         for field in &self.fields {
@@ -454,5 +483,35 @@ mod tests {
         assert_eq!(form.back(), Back::Stay); // 2 -> 1
         assert_eq!(form.back(), Back::Stay); // 1 -> 0
         assert_eq!(form.back(), Back::Cancel); // at first octet of only field
+    }
+
+    #[test]
+    fn right_walks_fields_like_select_but_never_submits() {
+        let params = vec![host_param(), port_param()];
+        let mut form = Form::for_action(ModuleId::from("net.ports"), "scan", &params).unwrap();
+        // host has 4 octets, then the port field: 4 rights lands on port...
+        form.right();
+        form.right();
+        form.right();
+        form.right();
+        assert_eq!(form.cursor(), 1, "now on the port field");
+        // one more right: nothing past the last field's only edit point.
+        form.right();
+        assert_eq!(form.cursor(), 1, "stays put, does not submit");
+    }
+
+    #[test]
+    fn left_walks_fields_like_back_but_never_cancels() {
+        let params = vec![host_param()];
+        let mut form = Form::for_action(ModuleId::from("net.ports"), "scan", &params).unwrap();
+        form.right(); // octet cursor 0 -> 1
+        form.right(); // 1 -> 2
+        assert_eq!(form.fields()[0].widget.display(), "10.0.[0].1");
+        form.left(); // 2 -> 1
+        form.left(); // 1 -> 0
+        assert_eq!(form.fields()[0].widget.display(), "[10].0.0.1");
+        form.left(); // already at the first octet of the only field: stays put
+        assert_eq!(form.cursor(), 0);
+        assert_eq!(form.fields()[0].widget.display(), "[10].0.0.1", "no wraparound, no cancel");
     }
 }

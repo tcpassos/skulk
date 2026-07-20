@@ -22,18 +22,28 @@ use rppal::spi::{Bus, Mode, SimpleHalSpiDevice, SlaveSelect, Spi};
 /// crate doesn't depend on skulkd's config structs.
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
+    /// Passed straight through to `mipidsi::Builder::display_size()`, which
+    /// wants the panel's NATIVE (as-if-`rotation`-were-0) dimensions, not
+    /// the final on-screen shape. A panel that's natively portrait but used
+    /// here in landscape (e.g. the Waveshare 1.14", native 135x240) needs
+    /// width/height set to that native 135x240, not the rotated 240x135 —
+    /// getting this backwards is what causes a stray/garbage line on one
+    /// edge and a clipped line on the opposite edge, since `mipidsi` then
+    /// reads outside the real glass window.
     pub width: u16,
     pub height: u16,
     /// Offset of the visible panel within the controller's larger
-    /// addressable framebuffer — most small MIPI-DCS boards need a nonzero
-    /// offset or the picture is shifted, clipping one edge while the
-    /// opposite edge shows stray pixels from outside the written window.
-    /// Start at (0, 0) and nudge against the real display if so; `mipidsi`
-    /// re-derives the effective offset from `rotation` automatically, so
-    /// the same values keep working across every rotation.
+    /// addressable framebuffer, in that SAME native frame as width/height
+    /// above. Given a native-frame offset, `mipidsi` re-derives the
+    /// effective per-rotation offset for you, so the same values keep
+    /// working across every rotation — but only once width/height/offset
+    /// are all in that native frame; feeding it final-on-screen dimensions
+    /// instead defeats this and offsets stop carrying over between rotations.
     pub offset_x: u16,
     pub offset_y: u16,
-    /// Clockwise rotation in degrees: 0, 90, 180, or 270.
+    /// Clockwise rotation in degrees: 0, 90, 180, or 270. For a natively
+    /// portrait panel used in landscape, only 90/270 actually swap the axes
+    /// into landscape — 0/180 stay portrait.
     pub rotation: u16,
     pub spi_bus: u8,
     pub spi_cs: u8,

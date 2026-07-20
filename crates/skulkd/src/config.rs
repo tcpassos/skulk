@@ -113,16 +113,25 @@ pub struct DisplaySection {
     /// LCD Module) or `"st7735s"` (Waveshare 1.44" LCD HAT). Ignored by
     /// drivers that only support one chip.
     pub chip: String,
+    /// NATIVE panel dimensions (as if `rotation` were 0), passed straight to
+    /// `mipidsi::Builder::display_size()` — NOT the final on-screen shape.
+    /// The Waveshare 1.14" glass is natively portrait (135x240) even though
+    /// it's driven here in landscape; getting this axis backwards (e.g.
+    /// 240x135) is what causes a stray/garbage line on one screen edge and
+    /// a clipped line on the opposite edge.
     pub width: u32,
     pub height: u32,
     /// Offset of the visible panel within the controller's addressable
-    /// framebuffer — most small SPI TFTs (including the Waveshare 1.14"
-    /// this was built against) need a nonzero value or the image is
-    /// shifted/cropped. Start at 0 and adjust against the real hardware;
-    /// the same values keep working regardless of `rotation` below.
+    /// framebuffer, in that SAME native frame as width/height above (e.g.
+    /// (52, 40) for the Waveshare 1.14"). Given a native-frame offset,
+    /// mipidsi re-derives the effective per-rotation offset for you, so the
+    /// same values keep working across every rotation — but only once
+    /// width/height/offset are all in that native frame.
     pub offset_x: u32,
     pub offset_y: u32,
-    /// Clockwise rotation in degrees: 0 (default), 90, 180, or 270.
+    /// Clockwise rotation in degrees: 0 (default), 90, 180, or 270. For a
+    /// natively portrait panel used in landscape, only 90/270 actually swap
+    /// the axes into landscape — 0/180 stay portrait.
     pub rotation: u16,
     pub interface: DisplayInterface,
     /// SPI bus/chip-select index (maps to rppal's `Bus`/`SlaveSelect`).

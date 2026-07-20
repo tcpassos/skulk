@@ -28,11 +28,17 @@ pub trait InputSource: Send {
 }
 
 /// A device's logical navigation actions — deliberately small: a physical
-/// implant has a handful of buttons or an encoder, not a keyboard.
+/// implant has a handful of buttons or an encoder, not a keyboard. `Left`/
+/// `Right` are optional — a 4-button device (up/down/select/back only) works
+/// unchanged with neither bound; a 5-way joystick can additionally bind them
+/// to move a [`crate::form::Form`]'s cursor between fields/edit points
+/// without the submit/cancel side effect `Select`/`Back` have at the ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavAction {
     Up,
     Down,
+    Left,
+    Right,
     Select,
     Back,
 }
@@ -42,6 +48,8 @@ impl NavAction {
         match name.to_ascii_lowercase().as_str() {
             "up" => Some(Self::Up),
             "down" => Some(Self::Down),
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
             "select" => Some(Self::Select),
             "back" => Some(Self::Back),
             _ => None,

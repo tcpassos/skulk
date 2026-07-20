@@ -196,6 +196,9 @@ impl App {
                     self.menu.move_down();
                     None
                 }
+                // A flat vertical list has no horizontal axis to move along —
+                // Left/Right are only meaningful once a Form is open.
+                NavAction::Left | NavAction::Right => None,
                 NavAction::Back => {
                     self.screen = Screen::Status;
                     None
@@ -234,6 +237,14 @@ impl App {
                         }
                         NavAction::Down => {
                             form.down();
+                            FormOutcome::Stay
+                        }
+                        NavAction::Left => {
+                            form.left();
+                            FormOutcome::Stay
+                        }
+                        NavAction::Right => {
+                            form.right();
                             FormOutcome::Stay
                         }
                         NavAction::Select => match form.select() {

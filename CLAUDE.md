@@ -184,6 +184,39 @@ Network modules take a `PortSpec` param (from `module-sdk`) for `ports`
   that's definitely in the source reports as "not found"), but a full crate
   actually recompiles from scratch when checked alone. Fix: `cargo clean -p
   <affected crates>` (not a full clean) and rebuild.
+- **`mipidsi`'s `display_size()`/`display_offset()` want the panel's NATIVE
+  (as-if-rotation-were-0) dimensions/offset, not the final on-screen shape**
+  — confirmed by reading `mipidsi` 0.10's actual source
+  (`set_address_window`, `MemoryMapping::from_orientation`): it internally
+  re-derives the per-rotation offset from `FRAMEBUFFER_SIZE - (display_size +
+  offset)`, using whatever raw width/height/offset you passed in. Feed it the
+  FINAL (already-rotated) shape instead and this math silently underflows/
+  goes wrong, showing up as a garbage line on one screen edge and a clipped
+  line on the opposite edge, and a large stray offset on rotations that
+  reverse an axis (e.g. 180). This only bites panels that are natively
+  non-square: the Waveshare 1.14" LCD Module's glass is natively PORTRAIT
+  (135x240) even though `skulk.toml` can drive it in landscape — so
+  `[display]` there needs `width=135 height=240 offset_x=52 offset_y=40`,
+  NOT the on-screen 240x135, with `rotation=90` (or `270`) to actually swap
+  the axes into landscape (`0`/`180` stay portrait — they can't produce this
+  panel's landscape image no matter the offset). The Waveshare 1.44" LCD
+  HAT (ST7735S, this project's actual current hardware) is natively square
+  (128x128) so this width/height trap doesn't apply to it, but it still
+  needs a nonzero offset: its GRAM is 132x162 (`ST7735s::FRAMEBUFFER_SIZE`),
+  bigger than the 128x128 visible glass. `offset_x=2 offset_y=1` at
+  `rotation=90` is hardware-confirmed: decoding the actual MADCTL byte this
+  repo's RaspyJack fork's ST7735S driver (`LCD_1in44.py`) writes for its
+  default orientation shows it's `mipidsi`'s `Rotation::Deg90` (NOT `Deg0` —
+  an easy wrong guess, made once already, since `LCD_1in44.py`'s `LCD_X`/
+  `LCD_Y` constants look like they're "the native offset" but are actually
+  already Deg90-adjusted), and at that rotation `(2, 1)` reproduces
+  `LCD_1in44.py`'s applied values exactly. Being square, `display_size` is
+  width/height-trap-free at every rotation, but the OFFSET is not
+  interchangeable across rotations the way the "native offset, re-derived
+  automatically" framing above implies in the abstract: `0`/`180` swap in a
+  *different* `MemoryMapping` (reverse-without-swap vs swap-without-full-
+  reverse), so they need their own on-hardware check — don't assume they're
+  fine just because `90` is.
 
 ## Where to look
 

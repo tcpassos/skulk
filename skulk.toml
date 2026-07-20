@@ -22,30 +22,52 @@ addr = "127.0.0.1:9000"  # bind address (listen) or controller address (dial)
 path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKULK_LOOT
 
 # On-device LCD (the `lcd` feature). Omitted/empty driver -> no display.
-# Two Waveshare boards share this same pin layout; only chip/resolution/bgr differ:
-#   - 1.14inch LCD Module: chip = "st7789",  width = 240, height = 135, bgr = false
-#   - 1.44inch LCD HAT:    chip = "st7735s", width = 128, height = 128, bgr = true
+# The block below is ready for the Waveshare 1.44" LCD HAT (ST7735S, joystick
+# + 3-button variant). For the 1.14" LCD Module instead, use:
+#   chip = "st7789"  width = 135  height = 240  offset_x = 52  offset_y = 40
+#   rotation = 90  bgr = false
+#   (that panel is natively PORTRAIT even though it's used in landscape, so
+#   width/height there are its native 135x240, not the on-screen 240x135 --
+#   see the WIDTH/HEIGHT note below for why that distinction matters)
+#
+# WIDTH/HEIGHT: mipidsi's `display_size()` wants the panel's NATIVE (as if
+# rotation were 0) dimensions, not the final on-screen shape -- it derives
+# the rotated/final size for you from `rotation` below. The 1.44" glass is
+# natively square (128x128), so this native-vs-final distinction is moot for
+# it specifically -- width/height are 128/128 at any rotation.
+#
+# OFFSET (offset_x/offset_y): the panel's position within the ST7735S
+# controller's larger 132x162 addressable framebuffer, in that same native
+# (rotation-0) frame as width/height above. (2, 1), at `rotation = 90` below,
+# is hardware-confirmed: it reproduces this repo's RaspyJack fork's own
+# ST7735S driver (`LCD_1in44.py`'s default `LCD_X`/`LCD_Y` adjust values)
+# pixel-for-pixel on the same physical HAT.
+#
+# ROTATION: clockwise degrees (0/90/180/270). `90` is confirmed clean on
+# real hardware. `0`/`180` are NOT plain 90-degree steps away from that in
+# effective offset terms -- for this chip the offset math only carries over
+# unchanged within the same MADCTL row/column-swap family, so `0`/`180`
+# need their own on-hardware check (and possibly `Orientation::mirrored`,
+# which this driver doesn't expose yet) rather than just picking whichever
+# looks closest to upright.
 # [display]
 # driver = "mipidsi"
 # chip = "st7735s"
 # width = 128
 # height = 128
-# offset_x = 0   # panel offset within the controller's framebuffer -- these
-# offset_y = 0   # small SPI TFTs often need one; calibrate against real hardware.
-                 # Symptom of a wrong offset: content clipped on one edge,
-                 # a line of stray/garbage pixels on the opposite edge. The
-                 # same values keep working across every `rotation` below.
-# rotation = 0   # clockwise degrees: 0, 90, 180, or 270 -- e.g. flip 180 if
-                 # a physical button ends up on the wrong edge for its label
+# offset_x = 2
+# offset_y = 1
+# rotation = 90
 # interface = "spi"
 # spi_bus = 0
 # spi_cs = 0
 # dc_gpio = 25
 # rst_gpio = 27
 # bl_gpio = 24
-# bgr = true     # panel subpixel order -- RGB and BGR panels look identical,
-                 # wrong setting shows swapped red/blue; flip if colors are off
-# theme = "/opt/skulk/themes/neon"
+# bgr = true     # panel subpixel order -- 1.44"/ST7735S needs BGR (true);
+                 # the 1.14"/ST7789 needs RGB (false). Wrong setting swaps
+                 # red/blue.
+# theme = "/opt/skulk/themes/example"
                  # optional theme directory (a theme.toml + .bmp assets):
                  # supplies the palette, the HUD slot icons, and a fallback
                  # nav map. Omitted -> built-in default (monochrome, no icons).
@@ -63,7 +85,15 @@ path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKUL
 
 # Physical buttons/indicators wired to the device — surfaced in the Manifest
 # and consulted by the LCD's navigation. Repeat [[peripherals]] per pin.
-# GPIO numbers below are placeholders -- use your board's actual wiring.
+# GPIO numbers below are the Waveshare joystick + 3-button LCD HAT's actual
+# BCM wiring (5-way joystick + 3 side keys). The joystick covers all 4
+# directions -- up/down/left/right -- plus press (select); back lives on a
+# side key (KEY3) instead, since right is now its own action. Left/Right
+# only matter once a Form (spinner input) is open -- they move the cursor
+# between fields/edit points without submitting or cancelling, unlike
+# Select/Back at their ends; the menu itself ignores them. KEY1 (gpio 21)
+# and KEY2 (gpio 20) aren't bound to anything yet -- there's no 7th nav
+# action today, but they're there for a future one.
 # Any single bound button will open the on-device menu; a full up/down/
 # select/back set (as mapped in [nav] below) is what makes it fully usable.
 # [[peripherals]]
@@ -77,6 +107,16 @@ path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKUL
 # gpio = [19]
 #
 # [[peripherals]]
+# name = "btn_left"
+# kind = "button"
+# gpio = [5]
+#
+# [[peripherals]]
+# name = "btn_right"
+# kind = "button"
+# gpio = [26]
+#
+# [[peripherals]]
 # name = "btn_select"
 # kind = "button"
 # gpio = [13]
@@ -84,8 +124,10 @@ path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKUL
 # [[peripherals]]
 # name = "btn_back"
 # kind = "button"
-# gpio = [26]
+# gpio = [16]
 #
+# Optional: an LED wired by the operator (not part of the Waveshare HAT) --
+# pick any free GPIO not listed above.
 # [[peripherals]]
 # name = "led_alert"
 # kind = "indicator"
@@ -94,9 +136,12 @@ path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKUL
 # Operator override of the LCD's button -> nav-action mapping. Highest
 # precedence, above whatever the active theme's own [nav] declares (no
 # theme is loaded from disk yet, so today this is the only layer that binds
-# anything). One of "up"/"down"/"select"/"back" per peripheral name.
+# anything). One of "up"/"down"/"left"/"right"/"select"/"back" per
+# peripheral name.
 # [nav]
 # btn_up = "up"
 # btn_down = "down"
+# btn_left = "left"
+# btn_right = "right"
 # btn_select = "select"
 # btn_back = "back"
