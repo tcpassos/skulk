@@ -7,11 +7,18 @@ description = "The Skulk implant daemon: engine + modules + transport in one run
 [features]
 # Each module is opt-in, so a deployed firmware can be built with only what a
 # given drop needs (smaller binary, less RAM). Default includes everything.
-default = ["mod-sysinfo", "mod-portscan", "mod-services", "mod-dns-recon"]
+default = ["mod-sysinfo", "mod-portscan", "mod-services", "mod-dns-recon", "mod-temp"]
 mod-sysinfo = ["dep:example-sysinfo"]
 mod-portscan = ["dep:net-portscan"]
 mod-services = ["dep:net-services"]
 mod-dns-recon = ["dep:dns-recon"]
+# `sys.temp` needs no special hardware (a best-effort read of the kernel's
+# standard thermal sysfs, fails cleanly if absent), so unlike `mod-battery`
+# below it's in `default` alongside the other hardware-free utility modules.
+mod-temp = ["dep:sys-temp"]
+# `sys.battery` needs an actual INA219 sensor wired over I2C -- opt-in like
+# `lcd`, for the same reason: a real hardware add-on most builds don't have.
+mod-battery = ["dep:sys-battery"]
 # On-device LCD. Not in `default`: the display driver deps are Linux-only
 # and heavier than a typical recon module, so an operator opts in per build.
 # Bundles input-gpio too -- both ride on the same already-required `rppal`
@@ -28,6 +35,8 @@ example-sysinfo = { path = "../modules/sysinfo", optional = true }
 net-portscan = { path = "../modules/portscan", optional = true }
 net-services = { path = "../modules/services", optional = true }
 dns-recon = { path = "../modules/dns-recon", optional = true }
+sys-temp = { path = "../modules/temp", optional = true }
+sys-battery = { path = "../modules/battery", optional = true }
 lcd-render = { path = "../lcd-render", optional = true }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

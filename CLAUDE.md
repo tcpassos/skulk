@@ -41,7 +41,8 @@ lcd-render    on-device LCD: in-process consumer of Engine::subscribe()
               (host->octets, int/port->stepper, port-spec->range, bool,
               enum/allowed->picker); free-text params stay browse-only.    deps: engine, contract
 crates/modules/*   attack/recon modules. e.g. example-sysinfo -> sys.info,
-                   net-portscan -> net.ports, net-services -> net.services. deps: module-sdk, contract
+                   net-portscan -> net.ports, net-services -> net.services,
+                   sys-temp -> sys.temp, sys-battery -> sys.battery.        deps: module-sdk, contract
 ```
 
 **Rule:** modules never depend on `engine`; they depend on `module-sdk` + `contract`.
@@ -260,18 +261,39 @@ four nav actions (Up/Down edit, Select advances/submits, Back retreats/
 cancels). An action with a *required free-text* param (`string`/`mac`) stays
 browse-only (menu marker `-`; `+` marks form-able, none marks run-now).
 `ParamSpec` gained optional `min`/`max`/`allowed` (serde-default,
-back-compatible) to drive the spinners. **Still not live-tested on real
-hardware** — that's the immediate next step, on a Pi Zero 2 W + Waveshare
-1.14"/1.44" panel (`--features lcd`; see
-`[display]`/`[hud]`/`[[peripherals]]`/`[nav]` in `skulk.toml`). Also still
-open: whether the TUI's own colors should move onto the
-same `lcd_render::Theme` system instead of `skulk-tui/src/ui.rs`'s hardcoded
-consts. Cross-compiling from the Windows dev machine via `cross` (Docker) is
-confirmed working end-to-end: the test Pi Zero 2 W runs Raspberry Pi OS
-32-bit (`uname -m` -> `armv7l`), so the target is
-`armv7-unknown-linux-gnueabihf`, not aarch64 — `cross build --target
-armv7-unknown-linux-gnueabihf -p skulkd --features lcd` produces a real ARM
-ELF binary. On-device install/update is automated by `scripts/skulk-deploy.sh`
-(config-preserving; see the deploy note above), so it is no longer a manual `scp`.
+back-compatible) to drive the spinners. **Now live-tested on real hardware**
+— a Pi Zero 2 W + the Waveshare joystick/3-button LCD HAT, confirmed working
+on both the 1.14" (ST7789) and 1.44" (ST7735S) variants (`--features lcd`;
+see `[display]`/`[hud]`/`[[peripherals]]`/`[nav]` in `skulk.toml`, and the
+`mipidsi`-offset/rotation and RaspyJack-cross-checked-offset gotchas above).
+`NavAction` grew `Left`/`Right` (bound to the joystick's left/right presses),
+so a `Form`'s cursor moves between fields/edit points independently of
+`Select`/`Back`'s submit/cancel at the ends — `menu::App::apply_nav` ignores
+them on the plain vertical `Menu` screen, where they have no meaning. Every
+bounded `Widget` (octets, `Number`, `Range`) now wraps past its min/max
+instead of clamping, and holding `Up`/`Down` auto-repeats the step on an
+accelerating timer (`lib.rs`'s `HeldButton`, ~450ms initial delay then
+160ms→20ms) instead of needing one press per unit — dialling in a value like
+a port past 6000 no longer means hundreds of individual clicks. Two new
+**ambient sensor modules** feed the HUD: `sys.temp` (kernel thermal sysfs,
+no extra hardware, in `default`) and `sys.battery` (INA219 over I2C, needs
+the new `Capability::I2c` and the opt-in `mod-battery` feature, Linux-only
+real I2C access behind `crates/modules/battery/src/ina219.rs`'s
+`#[cfg(target_os = "linux")]` — register layout/calibration cross-checked
+against this repo's RaspyJack fork's own INA219 driver). Each has a one-shot
+`get` action and a `watch` action that polls forever, publishing to the HUD
+until cancelled; `skulkd::main` auto-invokes `watch` at boot for any
+compiled-in sensor whose slot name is listed in `[hud].slots` — that's the
+only on/off switch, no separate config flag (capability-gating still
+refuses `sys.battery` cleanly with no I2C bus present). Also still open:
+whether the TUI's own colors should move onto the same `lcd_render::Theme`
+system instead of `skulk-tui/src/ui.rs`'s hardcoded consts. Cross-compiling
+from the Windows dev machine via `cross` (Docker) is confirmed working
+end-to-end: the test Pi Zero 2 W runs Raspberry Pi OS 32-bit (`uname -m` ->
+`armv7l`), so the target is `armv7-unknown-linux-gnueabihf`, not aarch64 —
+`cross build --target armv7-unknown-linux-gnueabihf -p skulkd --features
+lcd` produces a real ARM ELF binary. On-device install/update is automated
+by `scripts/skulk-deploy.sh` (config-preserving; see the deploy note above),
+so it is no longer a manual `scp`.
 
 Every nontrivial change gets a test; run `cargo test` and keep it green.

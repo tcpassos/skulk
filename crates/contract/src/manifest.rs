@@ -179,6 +179,7 @@ pub enum Capability {
     MassStorage,
     Accelerometer,
     Display,
+    I2c,
     Other(String),
 }
 

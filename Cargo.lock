@@ -1589,6 +1589,8 @@ dependencies = [
  "net-portscan",
  "net-services",
  "serde",
+ "sys-battery",
+ "sys-temp",
  "tokio",
  "toml",
  "tracing",
@@ -1697,6 +1699,31 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "sys-battery"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "contract",
+ "module-sdk",
+ "rppal",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "sys-temp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "contract",
+ "module-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

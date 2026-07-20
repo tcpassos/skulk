@@ -16,6 +16,11 @@ pub fn detect() -> Vec<Capability> {
     if dir_has_entries("/sys/class/bluetooth") {
         caps.push(Capability::Bluetooth);
     }
+    // At least one I2C adapter registered (e.g. the Pi's onboard bus 1) --
+    // needed by I2C-wired sensors like `sys.battery`'s INA219.
+    if dir_has_entries("/sys/class/i2c-dev") {
+        caps.push(Capability::I2c);
+    }
     caps
 }
 

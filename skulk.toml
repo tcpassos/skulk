@@ -74,14 +74,24 @@ path = "skulk-loot.redb"   # redb store on disk; overridable at runtime via SKUL
 
 # On-device HUD/status band: a thin top strip compositing small keyed
 # indicators that modules publish (via ctx.widget) independent of whichever
-# screen is in focus -- e.g. a battery %, CPU temp, or an active alert.
-# `slots` lists which slot names to show, left to right; a slot appears only
-# once a module publishes a value for it, and slots not listed here are
-# ignored (the band is bounded). The theme maps each slot name to an icon
-# (an [assets] entry whose key equals the slot name); with no theme, or no
-# matching asset, the slot shows as text only. Empty/omitted -> no band.
+# screen is in focus. `slots` lists which slot names to show, left to right;
+# a slot appears only once a module publishes a value for it, and slots not
+# listed here are ignored (the band is bounded). The theme maps each slot
+# name to an icon (an [assets] entry whose key equals the slot name); with no
+# theme, or no matching asset, the slot shows as text only. Empty/omitted ->
+# no band.
+#
+# "battery" and "temp" are also the trigger for their own ambient sensor:
+# listing either one here is the ONLY switch needed -- skulkd auto-invokes
+# that module's `watch` action at boot (see `mod-temp`/`mod-battery` in
+# skulkd's Cargo features), which polls forever and keeps the slot updated
+# until shutdown. "temp" (`sys.temp`) needs no extra hardware. "battery"
+# (`sys.battery`) needs an INA219 sensor over I2C and `Capability::I2c` --
+# with neither present the watch invoke is refused cleanly (capability-
+# gating) and the slot just never appears. `net.ports scan` also publishes a
+# transient "ports" slot while a scan runs, if you'd rather see that instead.
 # [hud]
-# slots = ["battery", "temp", "ports"]
+# slots = ["battery", "temp"]
 
 # Physical buttons/indicators wired to the device — surfaced in the Manifest
 # and consulted by the LCD's navigation. Repeat [[peripherals]] per pin.

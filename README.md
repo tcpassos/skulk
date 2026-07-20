@@ -38,7 +38,8 @@ transport     socket adapter (TCP + JSON-lines, listen / reverse-dial)
 client        async client library for the protocol
 skulk-cli     the `skulk` command-line controller
 skulkd        the daemon: engine + modules + transport in one process
-modules/*     attack/recon modules (sys.info, net.ports, net.services, ...)
+modules/*     attack/recon modules (sys.info, net.ports, net.services,
+              sys.temp, sys.battery, ...)
 ```
 
 ## Quickstart
@@ -61,6 +62,7 @@ skulk describe                                        # what can this implant do
 skulk sys.info get
 skulk net.ports scan target=10.0.0.1 ports=1-1024
 skulk net.services detect target=10.0.0.1 ports=22,80,443
+skulk sys.temp watch                                  # ambient HUD feed until cancelled
 skulk loot
 skulk watch                                           # stream events live
 ```

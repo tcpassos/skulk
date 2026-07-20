@@ -14,4 +14,6 @@ members = [
     "crates/modules/portscan",
     "crates/modules/services",
     "crates/modules/dns-recon",
+    "crates/modules/temp",
+    "crates/modules/battery",
 ]

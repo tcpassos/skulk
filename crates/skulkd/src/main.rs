@@ -13,8 +13,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use contract::ImplantInfo;
+use contract::{Body, Command, Envelope, ImplantInfo, Invoke, ModuleId, RawParams};
 use engine::{Engine, RedbLoot};
+#[cfg(feature = "mod-battery")]
+use sys_battery::Battery;
 #[cfg(feature = "mod-dns-recon")]
 use dns_recon::DnsRecon;
 #[cfg(feature = "mod-sysinfo")]
@@ -23,6 +25,8 @@ use example_sysinfo::SysInfo;
 use net_portscan::PortScan;
 #[cfg(feature = "mod-services")]
 use net_services::Services;
+#[cfg(feature = "mod-temp")]
+use sys_temp::Temp;
 use transport::{run_dialer, run_listener, TransportConfig};
 
 use config::{Config, Mode};
@@ -74,10 +78,26 @@ async fn main() {
     engine.register(Arc::new(Services));
     #[cfg(feature = "mod-dns-recon")]
     engine.register(Arc::new(DnsRecon));
+    #[cfg(feature = "mod-temp")]
+    engine.register(Arc::new(Temp));
+    #[cfg(feature = "mod-battery")]
+    engine.register(Arc::new(Battery));
     engine.set_peripherals(config.peripherals.into_iter().map(Into::into).collect());
     let engine = Arc::new(engine);
 
     spawn_lcd(&engine, &config.display, &config.hud, &config.nav);
+
+    // Ambient sensors start themselves: no separate on/off config knob,
+    // listing the HUD slot in `[hud].slots` is already the operator's
+    // explicit opt-in. Each `watch` action runs until cancelled or shutdown.
+    #[cfg(feature = "mod-temp")]
+    if config.hud.slots.iter().any(|s| s == "temp") {
+        auto_watch(&engine, "sys.temp", "watch").await;
+    }
+    #[cfg(feature = "mod-battery")]
+    if config.hud.slots.iter().any(|s| s == "battery") {
+        auto_watch(&engine, "sys.battery", "watch").await;
+    }
 
     if config.heartbeat_secs > 0 {
         engine.spawn_heartbeat(Duration::from_secs(config.heartbeat_secs));
@@ -121,6 +141,27 @@ async fn main() {
             tracing::info!("shutdown requested by controller; stopping");
         }
     }
+}
+
+/// Self-dispatch a synthetic `Invoke` as if a controller sent it -- used to
+/// auto-start an ambient sensor's `watch` action at boot. `Engine::handle`
+/// spawns the actual long-running task and returns immediately, so this
+/// never blocks startup; capability-gating still applies exactly as it
+/// would for a real remote invoke (e.g. `sys.battery` stays off with no
+/// I2C bus detected).
+#[cfg(any(feature = "mod-temp", feature = "mod-battery"))]
+async fn auto_watch(engine: &Arc<Engine>, module: &str, action: &str) {
+    tracing::info!(module, action, "lcd: auto-starting ambient sensor for its listed HUD slot");
+    let env = Envelope::new(
+        Body::Command(Command::Invoke(Invoke {
+            module: ModuleId::from(module),
+            action: action.to_string(),
+            params: RawParams::default(),
+            timeout_ms: None,
+        })),
+        0,
+    );
+    engine.handle(env).await;
 }
 
 /// Bring up the on-device LCD, if `[display]` names a compiled-in driver.

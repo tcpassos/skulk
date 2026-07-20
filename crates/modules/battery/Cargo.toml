@@ -1,0 +1,16 @@
+[package]
+name = "sys-battery"
+version = "0.1.0"
+edition = "2021"
+description = "sys.battery module: INA219 voltage/current sensor over I2C, ambient HUD-ready"
+
+[dependencies]
+contract = { path = "../../contract" }
+module-sdk = { path = "../../module-sdk" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rppal = "0.22"
