@@ -170,6 +170,9 @@ impl Cancel {
 pub trait LootSink: Send + Sync {
     async fn put(&self, kind: LootKind, key: &str, bytes: Vec<u8>) -> Result<(), LootError>;
     async fn query(&self, query: &LootQuery) -> Result<Vec<LootEntry>, LootError>;
+    /// Fetch one item's actual bytes by key — `None` if no such key exists.
+    /// Distinct from `query`, which only ever returns metadata.
+    async fn get(&self, key: &str) -> Result<Option<(LootKind, Vec<u8>)>, LootError>;
     /// Remove all stored loot — the self-wipe / tamper reflex.
     async fn clear(&self) -> Result<(), LootError>;
 }

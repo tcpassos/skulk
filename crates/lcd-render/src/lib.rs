@@ -10,6 +10,7 @@ mod form;
 mod hud;
 mod input;
 mod menu;
+mod textview;
 mod theme;
 
 #[cfg(all(target_os = "linux", feature = "driver-mipidsi"))]
@@ -21,13 +22,14 @@ pub use driver_gpio_buttons::{ButtonConfig, GpioButtons};
 pub use form::{Field, Form, Widget};
 pub use hud::{Hud, Slot};
 pub use input::{InputEvent, InputSource, NavAction, NavMap};
-pub use menu::{App, Menu, Row, Screen};
+pub use menu::{App, Menu, NavOutcome, Row, Screen};
+pub use textview::TextView;
 pub use theme::{decode_bmp, SeverityPalette, Theme, ThemeError};
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use contract::{Body, Envelope, Event, Manifest, Severity, ViewManifest};
+use contract::{Body, Envelope, Event, LootEntry, LootQuery, Manifest, Severity, ViewManifest};
 use embedded_graphics::draw_target::{DrawTarget, DrawTargetExt};
 use embedded_graphics::geometry::{OriginDimensions, Point, Size};
 use embedded_graphics::image::Image;
@@ -149,6 +151,7 @@ impl Renderer {
                     };
                     format!(" {name} {action}{marker}")
                 }
+                Row::Loot(entry) => format!(" {}  {} B", entry.key, entry.size),
             };
             let style = if i == menu.selected() { selected_style } else { MonoTextStyle::new(font, self.theme.foreground) };
             Text::new(&text, Point::new(0, y), style).draw(target)?;
@@ -189,6 +192,36 @@ impl Renderer {
         Ok(())
     }
 
+    /// Draw a scrollable text view: a one-line title, then as many content
+    /// lines (from `view.scroll()` onward) as fit. Unlike the menu/form,
+    /// which shrink their font to fit everything at once, this picks a
+    /// fixed, readable line count and scrolls instead — loot content (or
+    /// any future caller) can be arbitrarily long.
+    pub fn draw_text_view<D>(&self, target: &mut D, view: &TextView) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        target.clear(self.theme.background)?;
+
+        let bounds = target.bounding_box();
+        let font = pick_font(Some(self.theme.font), bounds.size.height, 6);
+        let header_style = MonoTextStyle::new(font, self.theme.foreground);
+        let content_style = MonoTextStyle::new(font, self.theme.foreground);
+        let line_height = (font.character_size.height + font.character_spacing) as i32;
+
+        let mut y = font.character_size.height as i32;
+        Text::new(view.title(), Point::new(0, y), header_style).draw(target)?;
+
+        for line in view.lines().iter().skip(view.scroll()) {
+            y += line_height;
+            if y > bounds.size.height as i32 {
+                break;
+            }
+            Text::new(line, Point::new(0, y), content_style).draw(target)?;
+        }
+        Ok(())
+    }
+
     /// Draw whichever screen `app` currently has active.
     pub fn draw_app<D>(&self, target: &mut D, app: &App) -> Result<(), D::Error>
     where
@@ -200,6 +233,10 @@ impl Renderer {
             Screen::Form => match app.form() {
                 Some(form) => self.draw_form(target, form),
                 None => self.draw_menu(target, app.menu()), // defensive: no form -> show menu
+            },
+            Screen::TextView => match app.text_view() {
+                Some(view) => self.draw_text_view(target, view),
+                None => self.draw_menu(target, app.menu()), // defensive: nothing to show -> menu
             },
         }
     }
@@ -413,6 +450,10 @@ pub async fn run_app<D>(
     D: DrawTarget<Color = Rgb565>,
 {
     let mut app = App::new(manifest);
+    // Backfill whatever loot is already stored -- Event::LootStored (below)
+    // keeps this current from here on. Direct in-process call (like
+    // `manifest()`), no envelope round-trip needed.
+    app.set_loot_backlog(engine.loot_query(&LootQuery::default()).await);
     let mut hud = Hud::new(hud_slots.clone());
     let icons = renderer.load_hud_icons(&hud_slots);
     let mut rx = engine.subscribe();
@@ -449,6 +490,14 @@ pub async fn run_app<D>(
                                 draw(&mut target, &app, &hud);
                             }
                         }
+                        // Keeps the menu's loot list current; only visible
+                        // (so only worth a redraw) while it's on screen.
+                        Body::Event(Event::LootStored { key, kind, size }) => {
+                            app.note_loot(LootEntry { key, kind, size });
+                            if app.screen() == Screen::Menu {
+                                draw(&mut target, &app, &hud);
+                            }
+                        }
                         _ => {}
                     },
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -460,9 +509,8 @@ pub async fn run_app<D>(
                     Some(InputEvent::Pressed(peripheral)) => {
                         match nav.resolve(&peripheral) {
                             Some(action) => {
-                                if let Some(cmd) = app.apply_nav(action) {
-                                    engine.handle(menu::envelope(cmd)).await;
-                                }
+                                let outcome = app.apply_nav(action);
+                                apply_nav_outcome(&engine, &mut app, outcome).await;
                                 draw(&mut target, &app, &hud);
                                 // Only a repeating action starts/replaces the
                                 // hold -- a one-shot press (e.g. Select) on a
@@ -492,14 +540,34 @@ pub async fn run_app<D>(
             _ = tokio::time::sleep_until(
                 held.as_ref().map_or_else(tokio::time::Instant::now, |h| h.next_fire)
             ), if held.is_some() => {
-                let h = held.as_mut().expect("guarded by held.is_some() above");
-                if let Some(cmd) = app.apply_nav(h.action) {
-                    engine.handle(menu::envelope(cmd)).await;
-                }
+                // Copy the action out (NavAction is Copy) rather than holding
+                // `held`'s borrow across the outcome's `.await` below.
+                let action = held.as_ref().expect("guarded by held.is_some() above").action;
+                let outcome = app.apply_nav(action);
+                apply_nav_outcome(&engine, &mut app, outcome).await;
                 draw(&mut target, &app, &hud);
-                h.tick();
+                if let Some(h) = held.as_mut() {
+                    h.tick();
+                }
             }
         }
+    }
+}
+
+/// Apply one resolved [`NavOutcome`]: send an `Invoke` to the engine, or
+/// resolve a loot fetch directly against it (in-process, no envelope --
+/// same exemption as `Engine::manifest()`) and open the text view with
+/// whatever comes back.
+async fn apply_nav_outcome(engine: &Arc<Engine>, app: &mut App, outcome: NavOutcome) {
+    match outcome {
+        NavOutcome::None => {}
+        NavOutcome::Invoke(cmd) => {
+            engine.handle(menu::envelope(cmd)).await;
+        }
+        NavOutcome::FetchLoot(key) => match engine.loot_get(&key).await {
+            Some((_, bytes)) => app.show_loot_content(&key, &bytes),
+            None => app.show_loot_missing(&key),
+        },
     }
 }
 

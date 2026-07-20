@@ -14,14 +14,19 @@ security testing, research and education only.
 ## Workspace map (dependency arrow always points inward, toward `contract`)
 
 ```
-contract      protocol types: Envelope / Command / Event / Manifest / LootEntry. No internal deps.
-module-sdk    ImplantModule trait, ModuleCtx, LootSink, ParseParams.   deps: contract
+contract      protocol types: Envelope / Command / Event / Manifest /
+              LootEntry / LootContent. No internal deps.
+module-sdk    ImplantModule trait, ModuleCtx, LootSink (put/query/get),
+              ParseParams.                                              deps: contract
 engine        event bus, module registry, dispatcher, capability-gating,
-              loot stores (MemLoot / RedbLoot).                         deps: contract, module-sdk
+              loot stores (MemLoot / RedbLoot); Engine::manifest()/
+              loot_query()/loot_get() are direct in-process reads for
+              consumers that bypass the wire protocol (the on-device LCD). deps: contract, module-sdk
 transport     socket adapter — TCP + JSON-lines
               (serve_connection / run_listener / run_dialer).           deps: contract, engine
 client        async client library (Client: connect/send/recv/run/
-              watch/describe/loot). Proves the protocol is the boundary. deps: contract ONLY
+              watch/describe/loot/loot_fetch). Proves the protocol is
+              the boundary.                                             deps: contract ONLY
 skulk-cli     the `skulk` CLI (binary named `skulk`).                    deps: client, contract
 skulkd        the daemon binary: engine + modules + transport.          deps: engine, transport, modules
 lcd-render    on-device LCD: in-process consumer of Engine::subscribe()
@@ -89,8 +94,13 @@ to `/etc/skulk/deploy.env`); target auto-detected from `uname -m`.
   module parses them with `ParseParams::parse` into its own typed struct.
 - **Capability-gating:** modules declare `requires: Vec<Capability>`; the core
   refuses invocation with a structured error if the device lacks them.
-- **Lifecycle commands** (Ping/Describe/Loot/Shutdown) are "instant tasks" whose
-  payload rides in the `Result.output` (Describe's `Manifest` is serialized there).
+- **Lifecycle commands** (Ping/Describe/Loot/LootFetch/Shutdown) are "instant
+  tasks" whose payload rides in the `Result.output` (Describe's `Manifest` is
+  serialized there). `Loot` only ever returns metadata (`LootEntry`: key/kind/
+  size) — deliberately never bulk bytes, so listing loot can never itself leak
+  it. `LootFetch{key}` is the separate, explicit command that returns one
+  item's actual bytes (`LootContent`), so bulk content only ever leaves the
+  device when asked for by key, never as a side effect of browsing.
 - **CLI syntax (`skulk`):** module-first `<module> <action> key=value`. A token
   with a `.` is a module; bare words are reserved verbs (describe/loot/watch/
   ping/shutdown). Params **infer type** (JSON-parse, fallback to string);
@@ -269,7 +279,8 @@ see `[display]`/`[hud]`/`[[peripherals]]`/`[nav]` in `skulk.toml`, and the
 `NavAction` grew `Left`/`Right` (bound to the joystick's left/right presses),
 so a `Form`'s cursor moves between fields/edit points independently of
 `Select`/`Back`'s submit/cancel at the ends — `menu::App::apply_nav` ignores
-them on the plain vertical `Menu` screen, where they have no meaning. Every
+them on the plain vertical `Menu` screen (no horizontal axis there), though
+`Screen::TextView` (below) gives them a second meaning: page up/down. Every
 bounded `Widget` (octets, `Number`, `Range`) now wraps past its min/max
 instead of clamping, and holding `Up`/`Down` auto-repeats the step on an
 accelerating timer (`lib.rs`'s `HeldButton`, ~450ms initial delay then
@@ -285,9 +296,47 @@ against this repo's RaspyJack fork's own INA219 driver). Each has a one-shot
 until cancelled; `skulkd::main` auto-invokes `watch` at boot for any
 compiled-in sensor whose slot name is listed in `[hud].slots` — that's the
 only on/off switch, no separate config flag (capability-gating still
-refuses `sys.battery` cleanly with no I2C bus present). Also still open:
-whether the TUI's own colors should move onto the same `lcd_render::Theme`
-system instead of `skulk-tui/src/ui.rs`'s hardcoded consts. Cross-compiling
+refuses `sys.battery` cleanly with no I2C bus present).
+
+Loot content (not just its `key`/`kind`/`size` index) is now fetchable and
+viewable end to end, closing a real protocol gap: `Command::Loot` only ever
+returned metadata, and there was no way to see actual bytes remotely at all
+before this. The new `Command::LootFetch{key}` (→ `LootContent{key, kind,
+bytes}`, `ErrorCode::NotFound` if the key's gone) is deliberately separate
+from `Loot` — bulk content only ever leaves the device when asked for by a
+specific key, never as a side effect of listing. `LootSink` grew a matching
+`get(key)`; `Engine::loot_query()`/`loot_get()` are direct in-process
+pass-throughs for consumers that bypass the wire (same exemption as
+`manifest()`) — the on-device LCD uses these directly, the wire commands'
+dispatch handlers use them too, so the two paths can't disagree. `client`
+gained `loot_fetch()`; the CLI's `loot` verb now doubles as `skulk loot
+<key>` (prints the content, or a `(binary, N B, ...)` note if it isn't
+UTF-8) alongside the existing listing form; `skulk-tui` gained `Focus::Loot`
+(press `l` to browse the LOOT panel, Enter to fetch, Esc to back out) with
+fetched content shown in the larger middle panel it shares with
+DETAIL/FORM. On the LCD specifically — the part that most needed this, to
+not fall behind RaspyJack's own loot/log browsing — loot entries are a
+live-updating trailing "loot" group *inside* the existing `Menu` (no new
+button/screen-entry needed; `Menu::set_loot`/`note_loot` rebuild it, backed
+by an `Engine::loot_query()` backfill at `run_app` startup plus live
+`Event::LootStored`), and Select on one opens a new, deliberately generic
+`Screen::TextView` (`textview::TextView`: title + lines + scroll, pure
+state, no `embedded-graphics` — same split as `menu`/`form`) rather than a
+loot-specific screen, since a scrollable text viewer is obviously reusable
+later (full task output, a log tail, help text) and genericizing it cost
+nothing extra. Best-effort UTF-8 decode; anything else (or a key that
+vanished between listing and fetching, e.g. a wipe) shows an explanatory
+placeholder line instead of failing silently. This did require widening
+`App::apply_nav`'s return type from a plain `Option<Command>` to a new
+`NavOutcome` (`None`/`Invoke`/`FetchLoot`) — `apply_nav` stays synchronous
+and I/O-free (the actual `Engine::loot_get().await` happens in `run_app`,
+via the new `apply_nav_outcome` helper it shares with the existing
+Invoke-dispatch path), preserving the "pure state machine" split the
+menu/form code already had.
+
+Also still open: whether the TUI's own colors should move onto the same
+`lcd_render::Theme` system instead of `skulk-tui/src/ui.rs`'s hardcoded
+consts. Cross-compiling
 from the Windows dev machine via `cross` (Docker) is confirmed working
 end-to-end: the test Pi Zero 2 W runs Raspberry Pi OS 32-bit (`uname -m` ->
 `armv7l`), so the target is `armv7-unknown-linux-gnueabihf`, not aarch64 —

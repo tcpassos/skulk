@@ -148,6 +148,18 @@ async fn loot(client: &mut Client, args: &mut Vec<String>) -> Result<(), String>
     let prefix = take_flag(args, "--prefix");
     let kind = take_flag(args, "--kind").and_then(|k| parse_kind(&k));
     let limit = take_flag(args, "--limit").and_then(|l| l.parse().ok());
+
+    // A positional key left over after flag parsing (args[0] is "loot"
+    // itself) fetches that item's content instead of listing the index.
+    if let Some(key) = args.get(1) {
+        let content = client.loot_fetch(key.clone()).await.map_err(|e| e.to_string())?;
+        match std::str::from_utf8(&content.bytes) {
+            Ok(text) => println!("{text}"),
+            Err(_) => println!("(binary, {} B, kind {:?})", content.bytes.len(), content.kind),
+        }
+        return Ok(());
+    }
+
     let entries = client
         .loot(LootQuery { prefix, kind, limit })
         .await
@@ -277,6 +289,7 @@ fn print_usage() {
     println!("COMMANDS");
     println!("  describe                              list modules and capabilities");
     println!("  loot [--prefix P] [--kind K] [--limit N]   list captured loot");
+    println!("  loot <key>                            print one loot item's content");
     println!("  watch                                 stream events live");
     println!("  ping                                  liveness check");
     println!("  shutdown [--wipe]                     stop the implant (--wipe clears loot)\n");

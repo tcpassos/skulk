@@ -23,6 +23,8 @@ pub enum ErrorCode {
     InvalidParams,
     /// The module does not support the requested action.
     Unsupported,
+    /// No item matches the requested key/id (e.g. a loot key that doesn't exist).
+    NotFound,
     /// The task exceeded its timeout.
     Timeout,
     /// The implant is at capacity.

@@ -135,10 +135,27 @@ impl Engine {
                 // Result{ status: Cancelled }.
             }
             Command::Loot(query) => {
-                let entries = self.loot.query(&query).await.unwrap_or_default();
+                let entries = self.loot_query(&query).await;
                 let out = RawParams(serde_json::to_value(entries).unwrap_or_default());
                 self.emit(Body::Result(instant(out)), cause);
             }
+            Command::LootFetch { key } => match self.loot_get(&key).await {
+                Some((kind, bytes)) => {
+                    let content = LootContent { key, kind, bytes };
+                    let out = RawParams(serde_json::to_value(content).unwrap_or_default());
+                    self.emit(Body::Result(instant(out)), cause);
+                }
+                None => {
+                    self.emit(
+                        Body::Error(ProtocolError {
+                            code: ErrorCode::NotFound,
+                            message: format!("no loot '{key}'"),
+                            module: None,
+                        }),
+                        cause,
+                    );
+                }
+            },
             Command::Shutdown { mode } => {
                 tracing::warn!(?mode, "shutdown requested");
                 self.emit(
@@ -278,6 +295,22 @@ impl Engine {
             capabilities: self.capabilities.clone(),
             peripherals: self.peripherals.clone(),
         }
+    }
+
+    /// Direct in-process loot access, bypassing the wire protocol — same
+    /// exemption as [`Engine::manifest`], for the on-device LCD's loot
+    /// browser. `Command::Loot`'s dispatch handler uses this too, so the two
+    /// paths can never disagree.
+    pub async fn loot_query(&self, query: &LootQuery) -> Vec<LootEntry> {
+        self.loot.query(query).await.unwrap_or_default()
+    }
+
+    /// Direct in-process fetch of one loot item's bytes — the same exemption
+    /// as [`Engine::loot_query`]. `None` covers both "no such key" and a
+    /// store-level read failure; callers only need to know whether they got
+    /// content back.
+    pub async fn loot_get(&self, key: &str) -> Option<(LootKind, Vec<u8>)> {
+        self.loot.get(key).await.ok().flatten()
     }
 }
 

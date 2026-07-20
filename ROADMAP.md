@@ -41,6 +41,7 @@ Backlog rastreável do projeto. Fonte de verdade do "o que falta". Marque com `[
 ### Persistência
 - [x] `medium` **Loot store real** (`RedbLoot` em `engine`) — redb single-file ACID via `spawn_blocking`; layout `[kind_byte]++payload`. Testado automatizado (reabertura) E ao vivo (loot sobreviveu a kill+restart do processo). `MemLoot` mantido pra testes. Config de path via `IMPLANT_LOOT`.
 - [x] `easy` **Loot por referência** — `ctx.store_loot` grava bulk no store, wire carrega só `LootStored{key}` + `Loot` query retorna refs. Convenção habilitada.
+- [x] `medium` **Fetch de conteúdo do loot** — `Command::LootFetch{key}` (separado de `Loot`, que continua só metadados) retorna `LootContent{key,kind,bytes}` via `LootSink::get`; `ErrorCode::NotFound` pra chave inexistente. `client`/CLI (`skulk loot <key>`)/TUI (painel LOOT navegável, Enter busca)/LCD (loot como grupo dentro do `Menu`, Select abre um `Screen::TextView` genérico e rolável) — todos conseguem ver o conteúdo agora, não só o índice. Testado ponta-a-ponta (engine, client, TUI, LCD).
 
 ### Build, config & bootstrap
 - [x] `medium` **Feature-flags por módulo** — deps de módulo opcionais + `#[cfg(feature)]` no skulkd; provado ao vivo (build enxuto = só `net.port_scan`, default = ambos)

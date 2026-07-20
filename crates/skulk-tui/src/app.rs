@@ -9,12 +9,16 @@ use contract::*;
 pub enum Focus {
     Modules,
     Form,
+    /// Browsing the loot list, or (once `App::loot_content` is `Some`)
+    /// viewing one fetched item's content.
+    Loot,
 }
 
 /// What a sent command is, so its correlated Result can be routed.
 pub enum Pending {
     Describe,
     Loot,
+    LootFetch,
     Invoke,
 }
 
@@ -104,6 +108,13 @@ pub struct App {
     pub tasks: Vec<TaskRow>,
     pub events: Vec<String>,
     pub loot: Vec<LootEntry>,
+    /// Index of the selected row while `focus == Focus::Loot`.
+    pub loot_selected: usize,
+    /// The fetched content of one loot item, once opened from the list.
+    /// `None` means the loot panel shows the list, not a viewer.
+    pub loot_content: Option<LootContent>,
+    /// Scroll offset (in lines) while viewing `loot_content`.
+    pub loot_scroll: u16,
     pub last_heartbeat: Option<Instant>,
     pub started: Instant,
     pub pending: HashMap<MessageId, Pending>,
@@ -127,6 +138,9 @@ impl App {
             tasks: Vec::new(),
             events: Vec::new(),
             loot: Vec::new(),
+            loot_selected: 0,
+            loot_content: None,
+            loot_scroll: 0,
             last_heartbeat: None,
             started: Instant::now(),
             pending: HashMap::new(),
@@ -290,6 +304,36 @@ impl App {
         }
     }
 
+    pub fn loot_move_down(&mut self) {
+        if self.loot_selected + 1 < self.loot.len() {
+            self.loot_selected += 1;
+        }
+    }
+
+    pub fn loot_move_up(&mut self) {
+        self.loot_selected = self.loot_selected.saturating_sub(1);
+    }
+
+    /// Fetch the selected loot entry's content — `None` if the list is empty.
+    pub fn fetch_selected_loot(&self) -> Option<Command> {
+        let key = self.loot.get(self.loot_selected)?.key.clone();
+        Some(Command::LootFetch { key })
+    }
+
+    /// Close the content viewer, back to the loot list (stays in `Focus::Loot`).
+    pub fn close_loot_content(&mut self) {
+        self.loot_content = None;
+        self.loot_scroll = 0;
+    }
+
+    pub fn loot_scroll_down(&mut self) {
+        self.loot_scroll = self.loot_scroll.saturating_add(1);
+    }
+
+    pub fn loot_scroll_up(&mut self) {
+        self.loot_scroll = self.loot_scroll.saturating_sub(1);
+    }
+
     pub fn log(&mut self, line: String) {
         let secs = self.started.elapsed().as_secs();
         self.events.push(format!("[{secs:>4}s] {line}"));
@@ -318,6 +362,16 @@ impl App {
                     if let Ok(list) = serde_json::from_value::<Vec<LootEntry>>(r.output.0.clone()) {
                         self.loot = list;
                         self.log(format!("loot: {} item(s)", self.loot.len()));
+                    }
+                }
+                Some(Pending::LootFetch) => {
+                    match serde_json::from_value::<LootContent>(r.output.0.clone()) {
+                        Ok(content) => {
+                            self.log(format!("loot: fetched {} ({} B)", content.key, content.bytes.len()));
+                            self.loot_content = Some(content);
+                            self.loot_scroll = 0;
+                        }
+                        Err(e) => self.log(format!("loot fetch: bad response: {e}")),
                     }
                 }
                 _ => {
@@ -651,6 +705,79 @@ mod tests {
             0,
         ));
         assert!(app.running_task().is_none(), "both tasks finished");
+    }
+
+    fn sample_loot() -> Vec<LootEntry> {
+        vec![
+            LootEntry { key: "a".into(), kind: LootKind::Telemetry, size: 3 },
+            LootEntry { key: "b".into(), kind: LootKind::Other, size: 5 },
+        ]
+    }
+
+    #[test]
+    fn loot_navigation_clamps_at_both_ends() {
+        let mut app = App::new("x".into());
+        app.loot = sample_loot();
+        assert_eq!(app.loot_selected, 0);
+        app.loot_move_up(); // already at 0: stays put
+        assert_eq!(app.loot_selected, 0);
+        app.loot_move_down();
+        assert_eq!(app.loot_selected, 1);
+        app.loot_move_down(); // already at the last row: stays put
+        assert_eq!(app.loot_selected, 1);
+        app.loot_move_up();
+        assert_eq!(app.loot_selected, 0);
+    }
+
+    #[test]
+    fn fetch_selected_loot_targets_the_row_under_the_cursor() {
+        let mut app = App::new("x".into());
+        app.loot = sample_loot();
+        app.loot_move_down(); // -> "b"
+        match app.fetch_selected_loot() {
+            Some(Command::LootFetch { key }) => assert_eq!(key, "b"),
+            other => panic!("expected LootFetch{{key: \"b\"}}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fetch_selected_loot_is_none_when_the_list_is_empty() {
+        let app = App::new("x".into());
+        assert!(app.fetch_selected_loot().is_none());
+    }
+
+    #[test]
+    fn apply_loot_fetch_result_stores_content_and_resets_scroll() {
+        let mut app = App::new("x".into());
+        app.loot_scroll = 7;
+        let id = MessageId::new();
+        app.pending.insert(id, Pending::LootFetch);
+        let content = LootContent { key: "a".into(), kind: LootKind::Telemetry, bytes: b"hi".to_vec() };
+        let mut env = Envelope::new(
+            Body::Result(TaskResult {
+                task: TaskId::new(),
+                status: TaskStatus::Ok,
+                output: RawParams(serde_json::to_value(&content).unwrap()),
+            }),
+            0,
+        );
+        env.correlate = Some(id);
+        app.apply(env);
+
+        let got = app.loot_content.as_ref().expect("content should be set");
+        assert_eq!(got.key, "a");
+        assert_eq!(got.bytes, b"hi");
+        assert_eq!(app.loot_scroll, 0, "a fresh fetch resets scroll");
+    }
+
+    #[test]
+    fn close_loot_content_clears_content_and_scroll() {
+        let mut app = App::new("x".into());
+        app.loot_content = Some(LootContent { key: "a".into(), kind: LootKind::Other, bytes: vec![] });
+        app.loot_scroll = 4;
+        app.close_loot_content();
+        assert!(app.loot_content.is_none());
+        assert_eq!(app.loot_scroll, 0);
     }
 }
 

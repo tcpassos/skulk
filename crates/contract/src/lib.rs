@@ -18,7 +18,7 @@ pub mod ids;
 pub mod manifest;
 pub mod response;
 
-pub use command::{Command, Invoke, LootEntry, LootKind, LootQuery, RawParams, ShutdownMode};
+pub use command::{Command, Invoke, LootContent, LootEntry, LootKind, LootQuery, RawParams, ShutdownMode};
 pub use envelope::{Body, Envelope};
 pub use error::{ErrorCode, ProtocolError};
 pub use event::{Event, LogLevel, Severity, ViewLine, ViewManifest, WidgetUpdate};

@@ -34,9 +34,13 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     header(frame, app, outer[0]);
     modules(frame, app, body[0]);
-    // The middle-top panel is the module help, or the editable form once opened.
+    // The middle-top panel is the module help, the editable form once opened,
+    // or a fetched loot item's content -- all mutually exclusive, so they
+    // share the larger panel instead of squeezing into the small LOOT list.
     if app.focus == Focus::Form {
         form_view(frame, app, middle[0]);
+    } else if app.focus == Focus::Loot && app.loot_content.is_some() {
+        loot_content_view(frame, app, middle[0]);
     } else {
         detail(frame, app, middle[0]);
     }
@@ -224,12 +228,46 @@ fn tasks(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 }
 
 fn loot(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let focused = app.focus == Focus::Loot;
     let items: Vec<ListItem> = app
         .loot
         .iter()
-        .map(|e| ListItem::new(Line::raw(format!("{}  {:?}  {} B", e.key, e.kind, e.size))))
+        .enumerate()
+        .map(|(i, e)| {
+            let text = format!("{}  {:?}  {} B", e.key, e.kind, e.size);
+            let style = if focused && i == app.loot_selected {
+                Style::new().fg(ACCENT).add_modifier(Modifier::REVERSED)
+            } else {
+                Style::new()
+            };
+            ListItem::new(Line::styled(text, style))
+        })
         .collect();
-    frame.render_widget(List::new(items).block(Block::bordered().title(" LOOT ")), area);
+    let title = if focused { " LOOT (Enter: view, Esc: back) " } else { " LOOT (l: browse) " };
+    frame.render_widget(List::new(items).block(Block::bordered().title(title)), area);
+}
+
+/// One fetched loot item's content, in place of the DETAIL/FORM panel while
+/// `Focus::Loot` has something open. Best-effort UTF-8; anything else just
+/// says so rather than dumping raw bytes.
+fn loot_content_view(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let Some(content) = &app.loot_content else { return };
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(format!("{} ", content.key), Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:?}", content.kind), Style::new().fg(GROUP)),
+        ]),
+        Line::styled(format!("{} B   Up/Down: scroll   Esc: back to list", content.bytes.len()), Style::new().fg(DIM)),
+        Line::raw(""),
+    ];
+    match std::str::from_utf8(&content.bytes) {
+        Ok(text) => lines.extend(text.lines().map(|l| Line::raw(l.to_string()))),
+        Err(_) => lines.push(Line::styled("(binary content, not previewable)", Style::new().fg(DIM))),
+    }
+    let para = Paragraph::new(lines)
+        .scroll((app.loot_scroll, 0))
+        .block(Block::bordered().title(" LOOT CONTENT "));
+    frame.render_widget(para, area);
 }
 
 /// A live preview of the command the open form will send (or a hint when idle).
@@ -261,7 +299,7 @@ fn command_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 fn footer(frame: &mut Frame, area: ratatui::layout::Rect) {
     let line = Line::styled(
         "  Up/Down: modules   Enter: form / next / run   Tab: fields   Esc: cancel   \
-         c: stop task   r/l/p: refresh loot ping   Ctrl+C: quit",
+         c: stop task   r: refresh   l: loot (Enter: view)   p: ping   Ctrl+C: quit",
         Style::new().fg(DIM),
     );
     frame.render_widget(Paragraph::new(line), area);

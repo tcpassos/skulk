@@ -12,25 +12,30 @@ use redb::{Database, ReadableTable, TableDefinition};
 use contract::{LootKind, LootQuery};
 use module_sdk::{LootEntry, LootError, LootSink};
 
-/// Volatile in-memory loot store — for tests and dev only.
+/// Volatile in-memory loot store — for tests and dev only. Keeps the actual
+/// bytes (not just their size) so `get` works the same as `RedbLoot`'s.
 #[derive(Default)]
 pub struct MemLoot {
-    inner: Mutex<HashMap<String, (LootKind, usize)>>,
+    inner: Mutex<HashMap<String, (LootKind, Vec<u8>)>>,
 }
 
 #[async_trait]
 impl LootSink for MemLoot {
     async fn put(&self, kind: LootKind, key: &str, bytes: Vec<u8>) -> Result<(), LootError> {
-        self.inner.lock().unwrap().insert(key.to_string(), (kind, bytes.len()));
+        self.inner.lock().unwrap().insert(key.to_string(), (kind, bytes));
         Ok(())
     }
 
     async fn query(&self, query: &LootQuery) -> Result<Vec<LootEntry>, LootError> {
         let map = self.inner.lock().unwrap();
         Ok(filter(
-            map.iter().map(|(k, (kind, size))| (k.clone(), *kind, *size as u64)),
+            map.iter().map(|(k, (kind, bytes))| (k.clone(), *kind, bytes.len() as u64)),
             query,
         ))
+    }
+
+    async fn get(&self, key: &str) -> Result<Option<(LootKind, Vec<u8>)>, LootError> {
+        Ok(self.inner.lock().unwrap().get(key).cloned())
     }
 
     async fn clear(&self) -> Result<(), LootError> {
@@ -103,6 +108,28 @@ impl LootSink for RedbLoot {
                 rows.push((key, kind, size));
             }
             Ok(filter(rows.into_iter(), &query))
+        })
+        .await
+        .map_err(|e| LootError(e.to_string()))?
+        .map_err(LootError)
+    }
+
+    async fn get(&self, key: &str) -> Result<Option<(LootKind, Vec<u8>)>, LootError> {
+        let db = self.db.clone();
+        let key = key.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<Option<(LootKind, Vec<u8>)>, String> {
+            let read = db.begin_read().map_err(|e| e.to_string())?;
+            let table = read.open_table(LOOT).map_err(|e| e.to_string())?;
+            match table.get(key.as_str()).map_err(|e| e.to_string())? {
+                Some(v) => {
+                    let bytes = v.value();
+                    let kind = u8_to_kind(bytes.first().copied().unwrap_or(u8::MAX));
+                    let payload = bytes.get(1..).unwrap_or(&[]).to_vec();
+                    Ok(Some((kind, payload)))
+                }
+                None => Ok(None),
+            }
         })
         .await
         .map_err(|e| LootError(e.to_string()))?

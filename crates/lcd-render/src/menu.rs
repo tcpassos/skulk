@@ -3,14 +3,20 @@
 //! [`crate::NavMap`]; [`crate::Renderer::draw_menu`] does the pixel work,
 //! and [`App`] is the small state machine deciding which screen is active.
 
-use contract::{Command, Envelope, Invoke, Manifest, ModuleId, ParamSpec, RawParams, ViewLine, ViewManifest};
+use contract::{
+    Command, Envelope, Invoke, LootEntry, Manifest, ModuleId, ParamSpec, RawParams, ViewLine, ViewManifest,
+};
 
 use crate::form::{Back, Form};
 use crate::input::NavAction;
+use crate::textview::TextView;
 
 /// One row of the flattened, grouped module list — a scaled-down version of
 /// `skulk-tui`'s `Row` (no description text, no capability prose): a tiny
-/// screen has room for a name and a single marker, not a sentence.
+/// screen has room for a name and a single marker, not a sentence. Loot
+/// entries live in their own trailing "loot" group, appended/refreshed live
+/// as loot arrives (see [`Menu::set_loot`]/[`Menu::note_loot`]) rather than
+/// being part of the static manifest-derived rows above them.
 #[derive(Debug, Clone)]
 pub enum Row {
     Group(String),
@@ -24,6 +30,9 @@ pub enum Row {
         /// [`Form`] of spinner widgets on Select (see [`App::apply_nav`]).
         params: Vec<ParamSpec>,
     },
+    /// One stored loot item; Select opens its content in a [`TextView`]
+    /// (see [`NavOutcome::FetchLoot`]).
+    Loot(LootEntry),
 }
 
 /// Browsable, invokable menu built from a `Manifest`. Rebuild it (via
@@ -33,6 +42,10 @@ pub enum Row {
 pub struct Menu {
     rows: Vec<Row>,
     selected: usize,
+    /// How many of `rows` are the static manifest-derived rows, i.e. where
+    /// the loot section (if any) starts — see [`Menu::rebuild_loot_rows`].
+    module_row_count: usize,
+    loot: Vec<LootEntry>,
 }
 
 impl Menu {
@@ -57,8 +70,9 @@ impl Menu {
                 });
             }
         }
+        let module_row_count = rows.len();
         let selected = rows.iter().position(|r| matches!(r, Row::Module { .. })).unwrap_or(0);
-        Self { rows, selected }
+        Self { rows, selected, module_row_count, loot: Vec::new() }
     }
 
     pub fn rows(&self) -> &[Row] {
@@ -73,7 +87,7 @@ impl Menu {
         let mut i = self.selected;
         while i > 0 {
             i -= 1;
-            if matches!(self.rows[i], Row::Module { .. }) {
+            if !matches!(self.rows[i], Row::Group(_)) {
                 self.selected = i;
                 break;
             }
@@ -84,7 +98,7 @@ impl Menu {
         let mut i = self.selected;
         while i + 1 < self.rows.len() {
             i += 1;
-            if matches!(self.rows[i], Row::Module { .. }) {
+            if !matches!(self.rows[i], Row::Group(_)) {
                 self.selected = i;
                 break;
             }
@@ -92,7 +106,7 @@ impl Menu {
     }
 
     /// Invoke the selected row if it's runnable without params. Returns
-    /// `None` (does nothing) for group rows or actions that need params.
+    /// `None` (does nothing) for group/loot rows or actions that need params.
     pub fn activate(&self) -> Option<Command> {
         match self.rows.get(self.selected) {
             Some(Row::Module { id, action, invokable: true, .. }) => Some(Command::Invoke(Invoke {
@@ -105,10 +119,53 @@ impl Menu {
         }
     }
 
-    /// The currently-selected module row (not a group header), if any — lets
-    /// the app read its params to build a [`Form`].
+    /// The currently-selected module row (not a group header or a loot row),
+    /// if any — lets the app read its params to build a [`Form`].
     pub fn selected_row(&self) -> Option<&Row> {
         self.rows.get(self.selected).filter(|r| matches!(r, Row::Module { .. }))
+    }
+
+    /// The currently-selected loot entry, if the cursor is on one.
+    pub fn selected_loot(&self) -> Option<&LootEntry> {
+        match self.rows.get(self.selected) {
+            Some(Row::Loot(entry)) => Some(entry),
+            _ => None,
+        }
+    }
+
+    /// Replace the whole loot backlog — e.g. an initial backfill query run
+    /// once at startup (see `run_app`) — and rebuild the trailing "loot"
+    /// group from it.
+    pub fn set_loot(&mut self, entries: Vec<LootEntry>) {
+        self.loot = entries;
+        self.rebuild_loot_rows();
+    }
+
+    /// Fold in one freshly-stored item (`Event::LootStored`): updates it in
+    /// place if the key is already known (a module can overwrite its own
+    /// key), otherwise appends.
+    pub fn note_loot(&mut self, entry: LootEntry) {
+        match self.loot.iter_mut().find(|e| e.key == entry.key) {
+            Some(existing) => *existing = entry,
+            None => self.loot.push(entry),
+        }
+        self.rebuild_loot_rows();
+    }
+
+    /// Rebuild the trailing "loot" group from `self.loot`, keeping the
+    /// static module rows before it untouched. Only re-homes the cursor if
+    /// it became invalid (past the end, or now sitting on a group header
+    /// because the section shrank) — otherwise leaves it exactly where it
+    /// was, matching `Menu::from_manifest`'s "fail clean" stance.
+    fn rebuild_loot_rows(&mut self) {
+        self.rows.truncate(self.module_row_count);
+        if !self.loot.is_empty() {
+            self.rows.push(Row::Group("loot".to_string()));
+            self.rows.extend(self.loot.iter().cloned().map(Row::Loot));
+        }
+        if self.selected >= self.rows.len() || matches!(self.rows.get(self.selected), Some(Row::Group(_))) {
+            self.selected = self.rows.iter().position(|r| !matches!(r, Row::Group(_))).unwrap_or(0);
+        }
     }
 }
 
@@ -122,6 +179,8 @@ pub enum Screen {
     Menu,
     /// The spinner form for a params-taking action selected from the menu.
     Form,
+    /// A fetched loot item's content (see [`crate::TextView`]).
+    TextView,
 }
 
 /// What one resolved nav action did to an open [`Form`] — kept separate from
@@ -132,6 +191,23 @@ enum FormOutcome {
     CloseToMenu,
 }
 
+/// What [`App::apply_nav`] resolved a [`NavAction`] into — a plain `Option`
+/// isn't enough once more than one kind of "the caller needs to do
+/// something async" exists (send an `Invoke`, or fetch a loot item's bytes).
+/// `apply_nav` itself stays synchronous and I/O-free; `run_app` is the one
+/// place that actually awaits the engine, matching this crate's existing
+/// menu/form split ("pure state, no embedded-graphics").
+#[derive(Debug, PartialEq)]
+pub enum NavOutcome {
+    /// Nothing further to do.
+    None,
+    /// Send this command to the engine.
+    Invoke(Command),
+    /// Fetch this loot key's bytes (`Engine::loot_get`) and hand the result
+    /// to [`App::show_loot_content`]/[`App::show_loot_missing`].
+    FetchLoot(String),
+}
+
 /// Ties the menu, an optional input form, the latest tactical view, and
 /// physical input together: which screen is showing, and what one resolved
 /// [`NavAction`] does to it.
@@ -139,12 +215,19 @@ pub struct App {
     screen: Screen,
     menu: Menu,
     form: Option<Form>,
+    text_view: Option<TextView>,
     last_view: Option<ViewManifest>,
 }
 
 impl App {
     pub fn new(manifest: &Manifest) -> Self {
-        Self { screen: Screen::Status, menu: Menu::from_manifest(manifest), form: None, last_view: None }
+        Self {
+            screen: Screen::Status,
+            menu: Menu::from_manifest(manifest),
+            form: None,
+            text_view: None,
+            last_view: None,
+        }
     }
 
     pub fn screen(&self) -> Screen {
@@ -158,6 +241,40 @@ impl App {
     /// The open input form, if the current screen is [`Screen::Form`].
     pub fn form(&self) -> Option<&Form> {
         self.form.as_ref()
+    }
+
+    /// The open text viewer, if the current screen is [`Screen::TextView`].
+    pub fn text_view(&self) -> Option<&TextView> {
+        self.text_view.as_ref()
+    }
+
+    /// Seed the loot list from an initial backfill query (`run_app` issues
+    /// one at startup via `Engine::loot_query`) — after this, live
+    /// `Event::LootStored`s keep it current via [`App::note_loot`].
+    pub fn set_loot_backlog(&mut self, entries: Vec<LootEntry>) {
+        self.menu.set_loot(entries);
+    }
+
+    /// Fold in one freshly-stored loot item.
+    pub fn note_loot(&mut self, entry: LootEntry) {
+        self.menu.note_loot(entry);
+    }
+
+    /// Open the text viewer with a loot item's fetched content — called by
+    /// `run_app` once its (async, in-process) `Engine::loot_get` resolves.
+    /// Best-effort UTF-8 decode; anything else shows a placeholder instead
+    /// of failing (see [`TextView::from_bytes`]).
+    pub fn show_loot_content(&mut self, key: &str, bytes: &[u8]) {
+        self.text_view = Some(TextView::from_bytes(key, bytes));
+        self.screen = Screen::TextView;
+    }
+
+    /// The fetch came back empty (the key vanished between listing and
+    /// fetching, e.g. a wipe) — shows why instead of silently doing nothing,
+    /// which would look like the button didn't register.
+    pub fn show_loot_missing(&mut self, key: &str) {
+        self.text_view = Some(TextView::from_bytes(key, b"(no longer available)"));
+        self.screen = Screen::TextView;
     }
 
     /// Fold in a live tactical update. Does not change which screen is
@@ -176,39 +293,43 @@ impl App {
         })
     }
 
-    /// Route one resolved nav action. Returns a `Command` when Select just
-    /// activated a runnable menu row -- the caller sends it to the engine.
-    pub fn apply_nav(&mut self, action: NavAction) -> Option<Command> {
+    /// Route one resolved nav action.
+    pub fn apply_nav(&mut self, action: NavAction) -> NavOutcome {
         match self.screen {
             // Any press wakes the menu up; the press itself isn't also
             // consumed as a menu action (surprising to move the cursor on
             // the very button press that opened the menu).
             Screen::Status => {
                 self.screen = Screen::Menu;
-                None
+                NavOutcome::None
             }
             Screen::Menu => match action {
                 NavAction::Up => {
                     self.menu.move_up();
-                    None
+                    NavOutcome::None
                 }
                 NavAction::Down => {
                     self.menu.move_down();
-                    None
+                    NavOutcome::None
                 }
                 // A flat vertical list has no horizontal axis to move along —
-                // Left/Right are only meaningful once a Form is open.
-                NavAction::Left | NavAction::Right => None,
+                // Left/Right are only meaningful once a Form/TextView is open.
+                NavAction::Left | NavAction::Right => NavOutcome::None,
                 NavAction::Back => {
                     self.screen = Screen::Status;
-                    None
+                    NavOutcome::None
                 }
                 NavAction::Select => {
+                    // A loot row: hand the key back for an async fetch
+                    // rather than opening anything here (see `NavOutcome`).
+                    if let Some(entry) = self.menu.selected_loot() {
+                        return NavOutcome::FetchLoot(entry.key.clone());
+                    }
                     // Param-less action: invoke it and switch to Status to
                     // watch it run.
                     if let Some(cmd) = self.menu.activate() {
                         self.screen = Screen::Status;
-                        return Some(cmd);
+                        return NavOutcome::Invoke(cmd);
                     }
                     // Params-taking action: open a spinner form, but only if
                     // every required param is spinner-fillable. A required
@@ -224,7 +345,7 @@ impl App {
                         self.form = Some(form);
                         self.screen = Screen::Form;
                     }
-                    None
+                    NavOutcome::None
                 }
             },
             Screen::Form => {
@@ -258,18 +379,48 @@ impl App {
                     },
                 };
                 match outcome {
-                    FormOutcome::Stay => None,
+                    FormOutcome::Stay => NavOutcome::None,
                     FormOutcome::Submit(cmd) => {
                         self.form = None;
                         self.screen = Screen::Status; // watch it run
-                        Some(cmd)
+                        NavOutcome::Invoke(cmd)
                     }
                     FormOutcome::CloseToMenu => {
                         self.form = None;
                         self.screen = Screen::Menu;
-                        None
+                        NavOutcome::None
                     }
                 }
+            }
+            Screen::TextView => {
+                match action {
+                    NavAction::Up => {
+                        if let Some(tv) = self.text_view.as_mut() {
+                            tv.line_up();
+                        }
+                    }
+                    NavAction::Down => {
+                        if let Some(tv) = self.text_view.as_mut() {
+                            tv.line_down();
+                        }
+                    }
+                    NavAction::Left => {
+                        if let Some(tv) = self.text_view.as_mut() {
+                            tv.page_up();
+                        }
+                    }
+                    NavAction::Right => {
+                        if let Some(tv) = self.text_view.as_mut() {
+                            tv.page_down();
+                        }
+                    }
+                    NavAction::Back => {
+                        self.text_view = None;
+                        self.screen = Screen::Menu;
+                    }
+                    NavAction::Select => {} // no meaning here
+                }
+                NavOutcome::None
             }
         }
     }
@@ -395,8 +546,7 @@ mod tests {
     fn first_press_on_status_opens_the_menu_without_moving_the_cursor() {
         let mut app = App::new(&sample_manifest());
         assert_eq!(app.screen(), Screen::Status);
-        let cmd = app.apply_nav(NavAction::Down);
-        assert!(cmd.is_none());
+        assert_eq!(app.apply_nav(NavAction::Down), NavOutcome::None);
         assert_eq!(app.screen(), Screen::Menu);
         assert_eq!(app.menu().selected(), 1, "the opening press shouldn't also move the cursor");
     }
@@ -405,8 +555,7 @@ mod tests {
     fn back_returns_to_status_without_invoking() {
         let mut app = App::new(&sample_manifest());
         app.apply_nav(NavAction::Down); // open menu
-        let cmd = app.apply_nav(NavAction::Back);
-        assert!(cmd.is_none());
+        assert_eq!(app.apply_nav(NavAction::Back), NavOutcome::None);
         assert_eq!(app.screen(), Screen::Status);
     }
 
@@ -415,8 +564,7 @@ mod tests {
         let mut app = App::new(&sample_manifest());
         app.apply_nav(NavAction::Down); // open menu, selected on net.ports scan
         app.apply_nav(NavAction::Down); // move to sys.info get (invokable)
-        let cmd = app.apply_nav(NavAction::Select);
-        assert!(cmd.is_some());
+        assert!(matches!(app.apply_nav(NavAction::Select), NavOutcome::Invoke(_)));
         assert_eq!(app.screen(), Screen::Status, "running an action returns to the live view");
     }
 
@@ -424,8 +572,11 @@ mod tests {
     fn selecting_a_spinnable_params_action_opens_a_form() {
         let mut app = App::new(&sample_manifest());
         app.apply_nav(NavAction::Down); // open menu, selected on net.ports scan (needs a host target)
-        let cmd = app.apply_nav(NavAction::Select);
-        assert!(cmd.is_none(), "opening a form doesn't invoke yet");
+        assert_eq!(
+            app.apply_nav(NavAction::Select),
+            NavOutcome::None,
+            "opening a form doesn't invoke yet"
+        );
         assert_eq!(app.screen(), Screen::Form);
         assert_eq!(app.form().unwrap().action(), "scan");
     }
@@ -436,18 +587,17 @@ mod tests {
         app.apply_nav(NavAction::Down); // open menu on net.ports scan
         app.apply_nav(NavAction::Select); // open the form (host field, 4 octets)
         // Select walks octet 0->1->2->3, then the final Select submits.
-        assert!(app.apply_nav(NavAction::Select).is_none());
-        assert!(app.apply_nav(NavAction::Select).is_none());
-        assert!(app.apply_nav(NavAction::Select).is_none());
-        let cmd = app.apply_nav(NavAction::Select).expect("final select submits");
-        match cmd {
-            Command::Invoke(inv) => {
+        assert_eq!(app.apply_nav(NavAction::Select), NavOutcome::None);
+        assert_eq!(app.apply_nav(NavAction::Select), NavOutcome::None);
+        assert_eq!(app.apply_nav(NavAction::Select), NavOutcome::None);
+        match app.apply_nav(NavAction::Select) {
+            NavOutcome::Invoke(Command::Invoke(inv)) => {
                 assert_eq!(inv.module, ModuleId::from("net.ports"));
                 assert_eq!(inv.action, "scan");
                 // No example in the sample spec -> host seeds at 0.0.0.0.
                 assert_eq!(inv.params.0["target"], serde_json::json!("0.0.0.0"));
             }
-            _ => panic!("expected an invoke"),
+            other => panic!("expected an invoke, got {other:?}"),
         }
         assert_eq!(app.screen(), Screen::Status, "after submit, watch it run");
         assert!(app.form().is_none());
@@ -490,9 +640,92 @@ mod tests {
         };
         let mut app = App::new(&manifest);
         app.apply_nav(NavAction::Down); // open menu on sys.note write
-        let cmd = app.apply_nav(NavAction::Select);
-        assert!(cmd.is_none());
+        assert_eq!(app.apply_nav(NavAction::Select), NavOutcome::None);
         assert_eq!(app.screen(), Screen::Menu, "browse-only action: Select is a no-op");
+    }
+
+    #[test]
+    fn loot_rows_append_after_the_modules_and_are_navigable() {
+        let mut menu = Menu::from_manifest(&sample_manifest());
+        menu.set_loot(vec![LootEntry { key: "a".into(), kind: contract::LootKind::Other, size: 3 }]);
+        // 4 rows from sample_manifest (2 groups + 2 modules), then Group("loot") + the entry.
+        assert_eq!(menu.rows().len(), 6);
+        assert!(matches!(&menu.rows()[4], Row::Group(g) if g == "loot"));
+        assert!(matches!(&menu.rows()[5], Row::Loot(e) if e.key == "a"));
+
+        // move_down from the last module row lands on the loot row (groups
+        // are still skipped, but loot rows are now selectable like modules).
+        menu.selected = 3; // sys.info get, the last module row
+        menu.move_down();
+        assert_eq!(menu.selected(), 5);
+        assert!(menu.selected_loot().is_some());
+    }
+
+    #[test]
+    fn note_loot_updates_an_existing_key_in_place_rather_than_duplicating() {
+        let mut menu = Menu::from_manifest(&sample_manifest());
+        menu.note_loot(LootEntry { key: "a".into(), kind: contract::LootKind::Other, size: 3 });
+        menu.note_loot(LootEntry { key: "a".into(), kind: contract::LootKind::Other, size: 9 });
+        let loot_rows: Vec<&LootEntry> =
+            menu.rows().iter().filter_map(|r| match r { Row::Loot(e) => Some(e), _ => None }).collect();
+        assert_eq!(loot_rows.len(), 1, "same key updates in place, doesn't duplicate");
+        assert_eq!(loot_rows[0].size, 9);
+    }
+
+    #[test]
+    fn cursor_snaps_to_a_valid_row_if_the_loot_section_it_was_on_disappears() {
+        let mut menu = Menu::from_manifest(&sample_manifest());
+        menu.set_loot(vec![LootEntry { key: "a".into(), kind: contract::LootKind::Other, size: 3 }]);
+        menu.selected = 5; // the loot row
+        menu.set_loot(vec![]); // loot cleared (e.g. a wipe) -- section disappears
+        assert!(menu.selected() < menu.rows().len());
+        assert!(!matches!(menu.rows().get(menu.selected()), Some(Row::Group(_))));
+    }
+
+    #[test]
+    fn selecting_a_loot_row_requests_a_fetch_instead_of_invoking() {
+        let mut app = App::new(&sample_manifest());
+        app.set_loot_backlog(vec![LootEntry { key: "sysinfo/last".into(), kind: contract::LootKind::Telemetry, size: 3 }]);
+        app.apply_nav(NavAction::Down); // open menu
+        // Walk down to the loot row: net.ports scan, sys.info get, loot/last.
+        app.apply_nav(NavAction::Down);
+        app.apply_nav(NavAction::Down);
+        match app.apply_nav(NavAction::Select) {
+            NavOutcome::FetchLoot(key) => assert_eq!(key, "sysinfo/last"),
+            other => panic!("expected FetchLoot, got {other:?}"),
+        }
+        // Fetching doesn't change the screen by itself -- only a successful
+        // (or missing) result does, via show_loot_content/show_loot_missing.
+        assert_eq!(app.screen(), Screen::Menu);
+    }
+
+    #[test]
+    fn show_loot_content_opens_the_text_view() {
+        let mut app = App::new(&sample_manifest());
+        app.show_loot_content("k", b"hello\nworld");
+        assert_eq!(app.screen(), Screen::TextView);
+        assert_eq!(app.text_view().unwrap().lines(), &["hello", "world"]);
+    }
+
+    #[test]
+    fn show_loot_missing_still_opens_a_view_explaining_why() {
+        let mut app = App::new(&sample_manifest());
+        app.show_loot_missing("k");
+        assert_eq!(app.screen(), Screen::TextView);
+        assert_eq!(app.text_view().unwrap().lines(), &["(no longer available)"]);
+    }
+
+    #[test]
+    fn text_view_nav_scrolls_and_back_returns_to_the_menu() {
+        let mut app = App::new(&sample_manifest());
+        app.show_loot_content("k", b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10");
+        assert_eq!(app.apply_nav(NavAction::Down), NavOutcome::None);
+        assert_eq!(app.text_view().unwrap().scroll(), 1, "Down scrolls one line");
+        app.apply_nav(NavAction::Right);
+        assert_eq!(app.text_view().unwrap().scroll(), 5, "Right pages forward");
+        app.apply_nav(NavAction::Back);
+        assert_eq!(app.screen(), Screen::Menu);
+        assert!(app.text_view().is_none(), "Back closes the view");
     }
 
     #[test]

@@ -35,5 +35,11 @@ async fn redb_persists_across_reopen() {
     assert_eq!(by_prefix.len(), 1);
     assert_eq!(by_prefix[0].kind, LootKind::Pcap);
 
+    let (kind, bytes) = store.get("hash/dc01").await.unwrap().expect("key exists");
+    assert_eq!(kind, LootKind::Hash);
+    assert_eq!(bytes, b"abc");
+
+    assert!(store.get("no/such/key").await.unwrap().is_none());
+
     let _ = std::fs::remove_file(&path);
 }

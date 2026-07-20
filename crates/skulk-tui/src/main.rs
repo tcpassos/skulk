@@ -110,8 +110,10 @@ async fn handle_key(app: &mut App, key: KeyEvent, sender: &mut Sender) {
             KeyCode::Char('r') => {
                 send(app, sender, Command::Describe, Pending::Describe, "describe").await
             }
+            // Move focus into the loot panel and refresh it.
             KeyCode::Char('l') => {
-                send(app, sender, Command::Loot(LootQuery::default()), Pending::Loot, "loot").await
+                app.focus = Focus::Loot;
+                send(app, sender, Command::Loot(LootQuery::default()), Pending::Loot, "loot").await;
             }
             KeyCode::Char('p') => send(app, sender, Command::Ping, Pending::Invoke, "ping").await,
             // Cancel is fire-and-forget: the core doesn't ack it directly, the
@@ -144,6 +146,27 @@ async fn handle_key(app: &mut App, key: KeyEvent, sender: &mut Sender) {
             }
             KeyCode::Char(c) => app.form_char(c),
             _ => {}
+        },
+        Focus::Loot => match app.loot_content.is_some() {
+            // Viewing one fetched item's content: Up/Down scroll it.
+            true => match key.code {
+                KeyCode::Esc => app.close_loot_content(),
+                KeyCode::Up => app.loot_scroll_up(),
+                KeyCode::Down => app.loot_scroll_down(),
+                _ => {}
+            },
+            // Browsing the list: Up/Down move the cursor, Enter fetches.
+            false => match key.code {
+                KeyCode::Esc => app.focus = Focus::Modules,
+                KeyCode::Up => app.loot_move_up(),
+                KeyCode::Down => app.loot_move_down(),
+                KeyCode::Enter => {
+                    if let Some(command) = app.fetch_selected_loot() {
+                        send(app, sender, command, Pending::LootFetch, "loot fetch").await;
+                    }
+                }
+                _ => {}
+            },
         },
     }
 }

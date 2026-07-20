@@ -10,7 +10,8 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 
 use contract::{
-    Body, Command, Envelope, LootEntry, LootQuery, Manifest, MessageId, ProtocolError, TaskResult,
+    Body, Command, Envelope, LootContent, LootEntry, LootQuery, Manifest, MessageId, ProtocolError,
+    TaskResult,
 };
 
 /// The terminal outcome of a command.
@@ -105,6 +106,14 @@ impl Client {
         match self.run(Command::Loot(query), |_| {}).await? {
             Outcome::Result(r) => serde_json::from_value(r.output.0).map_err(to_io),
             Outcome::Error(e) => Err(rejected("loot", &e)),
+        }
+    }
+
+    /// Fetch one loot item's actual bytes by key.
+    pub async fn loot_fetch(&mut self, key: impl Into<String>) -> io::Result<LootContent> {
+        match self.run(Command::LootFetch { key: key.into() }, |_| {}).await? {
+            Outcome::Result(r) => serde_json::from_value(r.output.0).map_err(to_io),
+            Outcome::Error(e) => Err(rejected("loot_fetch", &e)),
         }
     }
 }

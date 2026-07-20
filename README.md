@@ -63,7 +63,8 @@ skulk sys.info get
 skulk net.ports scan target=10.0.0.1 ports=1-1024
 skulk net.services detect target=10.0.0.1 ports=22,80,443
 skulk sys.temp watch                                  # ambient HUD feed until cancelled
-skulk loot
+skulk loot                                            # list what's stored (key/kind/size only)
+skulk loot sysinfo/last                               # fetch and print one item's content
 skulk watch                                           # stream events live
 ```
 
