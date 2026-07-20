@@ -66,9 +66,18 @@ On Windows, `scripts/demo.ps1` runs an end-to-end tour (starts skulkd, drives it
 `.github/workflows/release.yml` runs that same cross-build in CI, manually
 (`workflow_dispatch`, so it doesn't fire on every push) — one matrix entry per
 target architecture, each publishing/overwriting its own standing
-`latest-<target>` GitHub release (a tarball with the release binary +
-`skulk.toml`), so the Pi always has one stable URL to pull the newest build
-from for its own arch. Add a target by adding a matrix line.
+`latest-<target>` GitHub release (a tarball with the release binary,
+`skulk.toml`, `scripts/skulk-deploy.sh`, and `themes/`), so the Pi always has one
+stable URL to pull the newest build from for its own arch. Add a target by adding
+a matrix line.
+
+**Pi deploy/update: `scripts/skulk-deploy.sh`** (idempotent; installs itself as
+`skulk-update`). Separates binary from config: binary at `/opt/skulk/skulkd`,
+live config at `/etc/skulk/skulk.toml` created ONCE from the shipped example and
+**never overwritten by updates** (so operator edits — peripherals/nav/listen
+addr — survive). Runs `skulkd` as a systemd service (root, for GPIO/SPI/raw
+sockets). Repo defaults to `tcpassos/skulk`, overridable via `SKULK_REPO` (saved
+to `/etc/skulk/deploy.env`); target auto-detected from `uname -m`.
 
 ## Locked-in decisions (do not re-litigate)
 
@@ -229,7 +238,7 @@ confirmed working end-to-end: the test Pi Zero 2 W runs Raspberry Pi OS
 32-bit (`uname -m` -> `armv7l`), so the target is
 `armv7-unknown-linux-gnueabihf`, not aarch64 — `cross build --target
 armv7-unknown-linux-gnueabihf -p skulkd --features lcd` produces a real ARM
-ELF binary. Getting that binary onto the device is still a manual `scp`;
-no deploy automation yet.
+ELF binary. On-device install/update is automated by `scripts/skulk-deploy.sh`
+(config-preserving; see the deploy note above), so it is no longer a manual `scp`.
 
 Every nontrivial change gets a test; run `cargo test` and keep it green.

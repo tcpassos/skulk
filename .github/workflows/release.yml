@@ -46,6 +46,8 @@ jobs:
           mkdir -p "$dist"
           cp "target/${{ matrix.target }}/release/skulkd" "$dist/"
           cp skulk.toml "$dist/"
+          cp scripts/skulk-deploy.sh "$dist/"
+          cp -r themes "$dist/"
           tar -czf "$dist.tar.gz" "$dist"
 
       - name: Publish the rolling latest-${{ matrix.target }} release

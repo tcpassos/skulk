@@ -74,6 +74,33 @@ anything with a dot is a module invocation.
 
 On Windows, `scripts/demo.ps1` starts the daemon and runs a scripted tour.
 
+## Deploy to a Raspberry Pi
+
+Releases are built by the manual `release.yml` workflow, which cross-compiles
+`skulkd` for the Pi and publishes a rolling `latest-<target>` release (a tarball
+with the binary, `skulk.toml`, the deploy script, and themes).
+
+`scripts/skulk-deploy.sh` installs and updates it **without ever clobbering your
+config**: the live config lives at `/etc/skulk/skulk.toml`, created once and
+preserved across every upgrade, while updates only replace the binary.
+
+```sh
+# First install (on the Pi):
+curl -fsSL https://raw.githubusercontent.com/tcpassos/skulk/main/scripts/skulk-deploy.sh -o skulk-deploy.sh
+sudo bash skulk-deploy.sh          # a fork? prefix with SKULK_REPO=youruser/skulk
+
+# Tailor the config once (id, listen addr, [display]/[[peripherals]]/[nav]):
+sudo nano /etc/skulk/skulk.toml
+sudo systemctl restart skulkd
+
+# Update anytime after that — one command, config untouched:
+sudo skulk-update
+```
+
+It runs `skulkd` as a **systemd service** (auto-start on boot, restart on crash;
+root for GPIO/SPI and raw sockets). Logs: `journalctl -u skulkd -f`. A private
+repo needs `GITHUB_TOKEN=…` in the environment (or `gh auth login`).
+
 ## Status
 
 Foundation complete and tested (engine, transport, persistent loot, config,
