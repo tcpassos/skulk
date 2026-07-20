@@ -1,0 +1,47 @@
+# Example Skulk LCD theme — a reference community themes can copy.
+#
+# A theme is a directory with this `theme.toml` plus any `.bmp` assets it
+# references. Point `[display].theme` in skulk.toml at that directory. Every
+# field here is optional; anything omitted keeps the built-in default, so a
+# theme can be as small as a single palette color. Unknown fields are ignored
+# (a theme authored against a newer Skulk still loads), so it's safe to leave
+# forward-looking keys in place.
+
+# Palette. Colors are "#rrggbb". `severity_*` tint tactical lines and HUD slot
+# values by severity; anything omitted keeps the default.
+[palette]
+background = "#0a0a0a"
+foreground = "#00ff9c"
+severity_info = "#4a9eff"
+severity_low = "#8888aa"
+severity_medium = "#e0c040"
+severity_high = "#ff8040"
+severity_critical = "#ff3030"
+
+# Content font, one of the built-in monospace sizes ("4x6", "5x8", "6x10",
+# "7x13", "8x13", "9x18", "10x20"). The renderer shrinks below this to fit a
+# small screen; it never grows above it. The HUD band uses its own fixed
+# compact font regardless of this.
+[font]
+name = "6x10"
+
+# Assets: a name -> `.bmp` file (relative to this directory). The HUD looks up
+# an icon by the *slot name* — so to give the "battery" HUD slot an icon, add
+# an asset whose key is exactly "battery". Icons should be authored a few
+# pixels shorter than the HUD band (roughly <= 14px tall) so they fit. The
+# files below are illustrative: drop your own `.bmp`s in this directory to use
+# them (a slot with no matching asset simply renders as text).
+# [assets]
+# battery = "battery.bmp"
+# temp = "temp.bmp"
+# ports = "ports.bmp"
+# alert = "alert.bmp"
+
+# A theme MAY suggest a default nav mapping (peripheral name -> up/down/
+# select/back). The operator's own [nav] in skulk.toml overrides this per
+# peripheral; this is only the fallback for peripherals the operator didn't map.
+# [nav]
+# btn_up = "up"
+# btn_down = "down"
+# btn_select = "select"
+# btn_back = "back"

@@ -3,7 +3,7 @@
 //! [`crate::NavMap`]; [`crate::Renderer::draw_menu`] does the pixel work,
 //! and [`App`] is the small state machine deciding which screen is active.
 
-use contract::{Command, Envelope, Event, Invoke, Manifest, ModuleId, RawParams, ViewLine, ViewManifest};
+use contract::{Command, Envelope, Invoke, Manifest, ModuleId, RawParams, ViewLine, ViewManifest};
 
 use crate::input::NavAction;
 
@@ -196,14 +196,6 @@ pub(crate) fn envelope(command: Command) -> Envelope {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     Envelope::new(contract::Body::Command(command), now)
-}
-
-/// Unwrap a bus envelope down to the `ViewManifest` it carries, if it's one.
-pub(crate) fn as_view_manifest(env: Envelope) -> Option<ViewManifest> {
-    match env.body {
-        contract::Body::Event(Event::ViewManifest(view)) => Some(view),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

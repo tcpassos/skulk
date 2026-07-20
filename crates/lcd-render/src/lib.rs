@@ -6,6 +6,7 @@
 
 mod driver_gpio_buttons;
 mod driver_mipidsi;
+mod hud;
 mod input;
 mod menu;
 mod theme;
@@ -16,34 +17,41 @@ pub use driver_mipidsi::{
 };
 #[cfg(all(target_os = "linux", feature = "input-gpio"))]
 pub use driver_gpio_buttons::{ButtonConfig, GpioButtons};
+pub use hud::{Hud, Slot};
 pub use input::{InputEvent, InputSource, NavAction, NavMap};
 pub use menu::{App, Menu, Row, Screen};
 pub use theme::{decode_bmp, SeverityPalette, Theme, ThemeError};
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use contract::{Body, Envelope, Event, Manifest, Severity, ViewManifest};
-use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::geometry::Point;
+use embedded_graphics::draw_target::{DrawTarget, DrawTargetExt};
+use embedded_graphics::geometry::{OriginDimensions, Point, Size};
+use embedded_graphics::image::Image;
+use embedded_graphics::mono_font::ascii::FONT_5X8;
 use embedded_graphics::mono_font::{MonoFont, MonoTextStyle, MonoTextStyleBuilder};
 use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::Text;
 use embedded_graphics::Drawable;
 use engine::Engine;
 use theme::FONT_CANDIDATES;
 use tokio::sync::broadcast;
 
+/// Compact fixed font for the HUD band, independent of the theme's content
+/// font: the band must stay a thin strip no matter how large a theme sets
+/// its main font.
+const HUD_FONT: &MonoFont<'static> = &FONT_5X8;
+/// Padding above+below the HUD text/icon, in pixels.
+const HUD_PAD: u32 = 3;
+
 /// Draws a [`ViewManifest`] onto any display using a [`Theme`]'s palette and
 /// font, automatically shrinking the font to fit when the theme's preferred
 /// size doesn't — the "automatic baseline" layout every theme gets for free.
+#[derive(Default)]
 pub struct Renderer {
     theme: Theme,
-}
-
-impl Default for Renderer {
-    fn default() -> Self {
-        Self { theme: Theme::default() }
-    }
 }
 
 impl Renderer {
@@ -148,6 +156,104 @@ impl Renderer {
         }
     }
 
+    /// Height in pixels the HUD band occupies (0 when disabled). Fixed from
+    /// [`HUD_FONT`], so the strip stays thin regardless of the theme's font.
+    pub fn hud_band_height(&self, hud: &Hud) -> u32 {
+        if hud.is_disabled() {
+            0
+        } else {
+            HUD_FONT.character_size.height + HUD_PAD * 2
+        }
+    }
+
+    /// Preload the icon bytes for each declared HUD slot from the theme, once,
+    /// so the per-frame draw doesn't re-read files. A slot with no matching
+    /// theme asset simply gets no icon (text-only) — the graceful fallback
+    /// when no theme is configured or a theme omits that icon.
+    pub fn load_hud_icons(&self, slots: &[String]) -> HashMap<String, Vec<u8>> {
+        slots
+            .iter()
+            .filter_map(|slot| self.theme.asset_bytes(slot).ok().map(|bytes| (slot.clone(), bytes)))
+            .collect()
+    }
+
+    /// Draw the HUD band across the top strip: each visible slot as an
+    /// optional icon (from `icons`) plus its value text, severity-tinted,
+    /// laid out left to right until the width runs out.
+    pub fn draw_hud<D>(
+        &self,
+        target: &mut D,
+        hud: &Hud,
+        icons: &HashMap<String, Vec<u8>>,
+    ) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let band_height = self.hud_band_height(hud);
+        if band_height == 0 {
+            return Ok(());
+        }
+        let width = target.bounding_box().size.width;
+        // The band's own background strip (may differ from content once themes
+        // gain a dedicated HUD color; for now it reuses the theme background).
+        target.fill_solid(
+            &Rectangle::new(Point::zero(), Size::new(width, band_height)),
+            self.theme.background,
+        )?;
+
+        let text_y = (HUD_PAD + HUD_FONT.character_size.height) as i32;
+        let mut x = 1i32;
+        for slot in hud.visible() {
+            if x >= width as i32 {
+                break; // ran out of strip; drop the rest (bounded band)
+            }
+            // Icon, if the theme supplied one for this slot.
+            if let Some(bytes) = icons.get(&slot.name) {
+                if let Ok(bmp) = decode_bmp(bytes) {
+                    let icon_w = bmp.size().width as i32;
+                    let icon_y = (band_height.saturating_sub(bmp.size().height) / 2) as i32;
+                    Image::new(&bmp, Point::new(x, icon_y)).draw(target)?;
+                    x += icon_w + 1;
+                }
+            }
+            let color = self.severity_color(slot.severity);
+            let style = MonoTextStyle::new(HUD_FONT, color);
+            Text::new(&slot.value, Point::new(x, text_y), style).draw(target)?;
+            x += slot.value.chars().count() as i32 * HUD_FONT.character_size.width as i32 + 4;
+        }
+        Ok(())
+    }
+
+    /// Full-frame render: the HUD band (if any) across the top, and `app`'s
+    /// active screen in the region below it. The single entry point the
+    /// [`run_app`] loop draws through.
+    pub fn draw_frame<D>(
+        &self,
+        target: &mut D,
+        app: &App,
+        hud: &Hud,
+        icons: &HashMap<String, Vec<u8>>,
+    ) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let band = self.hud_band_height(hud);
+        if band == 0 {
+            return self.draw_app(target, app);
+        }
+        self.draw_hud(target, hud, icons)?;
+        // Content renders into everything below the band. `cropped` reports the
+        // reduced size to the content's font-fitting and offsets its origin, so
+        // the existing screen code needs no awareness of the band.
+        let size = target.bounding_box().size;
+        let below = Rectangle::new(
+            Point::new(0, band as i32),
+            Size::new(size.width, size.height.saturating_sub(band)),
+        );
+        let mut content = target.cropped(&below);
+        self.draw_app(&mut content, app)
+    }
+
     /// Consume `Event::ViewManifest` off the engine's bus and draw each one
     /// as it arrives. Runs until the bus closes (engine shutdown).
     pub async fn run<D>(&self, mut rx: broadcast::Receiver<Envelope>, mut target: D)
@@ -202,40 +308,60 @@ impl InputSource for NoInput {
 
 /// Runs the full on-device experience: the tactical `ViewManifest` (as
 /// [`run`] already does) plus a browsable/invokable menu built from
-/// `manifest`, toggled by `input` events resolved through `nav`. Takes
-/// `engine` itself, not just its bus -- activating a menu row sends a
-/// `Command::Invoke` back into it, the one place this crate reaches beyond
-/// "draw what the bus already published". Returns once both the bus and
-/// `input` are exhausted (engine shutdown).
+/// `manifest` and a composited HUD band of `hud_slots`, toggled by `input`
+/// events resolved through `nav`. Takes `engine` itself, not just its bus --
+/// activating a menu row sends a `Command::Invoke` back into it, the one
+/// place this crate reaches beyond "draw what the bus already published".
+/// `renderer` carries the theme (so `hud_slots`' icons resolve). Returns once
+/// both the bus and `input` are exhausted (engine shutdown).
 pub async fn run_app<D>(
+    renderer: Renderer,
     engine: Arc<Engine>,
     manifest: &Manifest,
     mut input: Box<dyn InputSource>,
     nav: NavMap,
+    hud_slots: Vec<String>,
     mut target: D,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    let renderer = Renderer::new();
     let mut app = App::new(manifest);
+    let mut hud = Hud::new(hud_slots.clone());
+    let icons = renderer.load_hud_icons(&hud_slots);
     let mut rx = engine.subscribe();
 
-    if renderer.draw_app(&mut target, &app).is_err() {
-        tracing::warn!("lcd-render: draw failed");
-    }
+    // One place that turns current state into pixels, so every wake-up path
+    // (view update, HUD update, input) redraws identically.
+    let draw = |target: &mut D, app: &App, hud: &Hud| {
+        if renderer.draw_frame(target, app, hud, &icons).is_err() {
+            tracing::warn!("lcd-render: draw failed");
+        }
+    };
+
+    draw(&mut target, &app, &hud);
 
     loop {
         tokio::select! {
             result = rx.recv() => {
                 match result {
-                    Ok(env) => {
-                        if let Some(view) = menu::as_view_manifest(env) {
+                    Ok(env) => match env.body {
+                        Body::Event(Event::ViewManifest(view)) => {
                             app.apply_view(view);
-                            if app.screen() == Screen::Status && renderer.draw_app(&mut target, &app).is_err() {
-                                tracing::warn!("lcd-render: draw failed");
+                            // A background view update only matters on the
+                            // tactical screen; don't disturb the menu.
+                            if app.screen() == Screen::Status {
+                                draw(&mut target, &app, &hud);
                             }
                         }
-                    }
+                        // A HUD slot shows over every screen, so always redraw
+                        // (but only when the slot actually changed).
+                        Body::Event(Event::Widget(update)) => {
+                            if hud.apply(update) {
+                                draw(&mut target, &app, &hud);
+                            }
+                        }
+                        _ => {}
+                    },
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
@@ -248,9 +374,7 @@ pub async fn run_app<D>(
                                 if let Some(cmd) = app.apply_nav(action) {
                                     engine.handle(menu::envelope(cmd)).await;
                                 }
-                                if renderer.draw_app(&mut target, &app).is_err() {
-                                    tracing::warn!("lcd-render: draw failed");
-                                }
+                                draw(&mut target, &app, &hud);
                             }
                             None => tracing::info!(
                                 peripheral,
@@ -268,12 +392,20 @@ pub async fn run_app<D>(
 
 /// Spawn [`run_app`] on a dedicated blocking thread, for the same reason as
 /// [`spawn`]: a real display's draw calls block on SPI/I2C I/O.
-pub fn spawn_app<D>(engine: Arc<Engine>, manifest: Manifest, input: Box<dyn InputSource>, nav: NavMap, target: D)
-where
+pub fn spawn_app<D>(
+    renderer: Renderer,
+    engine: Arc<Engine>,
+    manifest: Manifest,
+    input: Box<dyn InputSource>,
+    nav: NavMap,
+    hud_slots: Vec<String>,
+    target: D,
+) where
     D: DrawTarget<Color = Rgb565> + Send + 'static,
 {
     tokio::task::spawn_blocking(move || {
-        tokio::runtime::Handle::current().block_on(run_app(engine, &manifest, input, nav, target));
+        tokio::runtime::Handle::current()
+            .block_on(run_app(renderer, engine, &manifest, input, nav, hud_slots, target));
     });
 }
 
@@ -411,7 +543,8 @@ mod tests {
 
         // Returns once QueuedInput's third poll yields None -- proving the
         // Select press actually drove `apply_nav` rather than getting stuck.
-        run_app(engine, &manifest, input, nav, display).await;
+        // Empty hud_slots: no band, exercises the menu/invoke path unchanged.
+        run_app(Renderer::new(), engine, &manifest, input, nav, Vec::new(), display).await;
 
         let result = loop {
             match tokio::time::timeout(std::time::Duration::from_secs(5), bus.recv()).await {
@@ -424,6 +557,82 @@ mod tests {
             }
         };
         assert_eq!(result.status, contract::TaskStatus::Ok);
+    }
+
+    fn tiny_manifest() -> Manifest {
+        Manifest {
+            protocol: 1,
+            implant: contract::ImplantInfo { id: "t".into(), hardware: "t".into(), firmware: "0".into() },
+            modules: vec![],
+            capabilities: vec![],
+            peripherals: vec![],
+        }
+    }
+
+    #[test]
+    fn draw_hud_renders_in_the_band_and_not_below_it() {
+        let renderer = Renderer::new();
+        let mut hud = Hud::new(vec!["battery".into()]);
+        hud.apply(contract::WidgetUpdate {
+            slot: "battery".into(),
+            value: "42%".into(),
+            severity: Some(Severity::Low),
+        });
+        let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(Size::new(128, 128));
+        renderer.draw_hud(&mut display, &hud, &HashMap::new()).unwrap();
+
+        let band = renderer.hud_band_height(&hud) as i32;
+        assert!(band > 0);
+        let lit_in_band = (0..128)
+            .flat_map(|x| (0..band).map(move |y| Point::new(x, y)))
+            .any(|p| display.get_pixel(p) != Rgb565::BLACK);
+        assert!(lit_in_band, "expected the slot's value text drawn in the band");
+        let lit_below = (0..128)
+            .flat_map(|x| (band..128).map(move |y| Point::new(x, y)))
+            .any(|p| display.get_pixel(p) != Rgb565::BLACK);
+        assert!(!lit_below, "draw_hud must confine itself to the band strip");
+    }
+
+    #[test]
+    fn draw_frame_composites_hud_over_content_below_it() {
+        let renderer = Renderer::new();
+        let mut app = App::new(&tiny_manifest());
+        app.apply_view(sample_view()); // give the status screen real content
+        let mut hud = Hud::new(vec!["battery".into()]);
+        hud.apply(contract::WidgetUpdate {
+            slot: "battery".into(),
+            value: "42%".into(),
+            severity: Some(Severity::Low),
+        });
+        let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(Size::new(128, 128));
+        renderer.draw_frame(&mut display, &app, &hud, &HashMap::new()).unwrap();
+
+        let band = renderer.hud_band_height(&hud) as i32;
+        let lit_in_band = (0..128)
+            .flat_map(|x| (0..band).map(move |y| Point::new(x, y)))
+            .any(|p| display.get_pixel(p) != Rgb565::BLACK);
+        let lit_below = (0..128)
+            .flat_map(|x| (band..128).map(move |y| Point::new(x, y)))
+            .any(|p| display.get_pixel(p) != Rgb565::BLACK);
+        assert!(lit_in_band, "HUD band should have pixels");
+        assert!(lit_below, "content should render below the band");
+    }
+
+    #[test]
+    fn draw_frame_without_a_band_is_fullscreen_content() {
+        // Empty HUD -> band height 0 -> identical to draw_app: content may
+        // legitimately draw at the very top row.
+        let renderer = Renderer::new();
+        let mut app = App::new(&tiny_manifest());
+        app.apply_view(sample_view());
+        let hud = Hud::new(vec![]);
+        assert_eq!(renderer.hud_band_height(&hud), 0);
+        let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(Size::new(128, 128));
+        renderer.draw_frame(&mut display, &app, &hud, &HashMap::new()).unwrap();
+        let lit = (0..128)
+            .flat_map(|x| (0..128).map(move |y| Point::new(x, y)))
+            .any(|p| display.get_pixel(p) != Rgb565::BLACK);
+        assert!(lit, "content should render");
     }
 
     /// A hardware-free `InputSource` that replays a fixed event queue, then

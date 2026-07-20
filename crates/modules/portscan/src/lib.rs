@@ -137,11 +137,21 @@ impl ImplantModule for PortScan {
                         },
                     ],
                 );
+                // Ambient HUD slot: a live open-port count that shows over any
+                // screen while the scan runs, independent of the tactical view
+                // above. The operator lists "ports" in `[hud].slots` to see it.
+                ctx.widget(
+                    "ports",
+                    open.len().to_string(),
+                    if open.is_empty() { None } else { Some(Severity::Medium) },
+                );
             }
             if ctx.cancelled() {
                 break;
             }
         }
+        // Retract the transient slot now the scan is done.
+        ctx.widget("ports", "", None);
         open.sort_unstable();
 
         let output = ScanOutput {

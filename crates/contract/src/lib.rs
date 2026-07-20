@@ -21,7 +21,7 @@ pub mod response;
 pub use command::{Command, Invoke, LootEntry, LootKind, LootQuery, RawParams, ShutdownMode};
 pub use envelope::{Body, Envelope};
 pub use error::{ErrorCode, ProtocolError};
-pub use event::{Event, LogLevel, Severity, ViewLine, ViewManifest};
+pub use event::{Event, LogLevel, Severity, ViewLine, ViewManifest, WidgetUpdate};
 pub use ids::{MessageId, ModuleId, TaskId};
 pub use manifest::{
     ActionSpec, Capability, ImplantInfo, Manifest, ModuleDescriptor, ParamSpec, Peripheral,

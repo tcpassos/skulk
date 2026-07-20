@@ -354,6 +354,9 @@ impl App {
                 Event::Heartbeat { .. } => self.last_heartbeat = Some(Instant::now()),
                 Event::Sensor { source, .. } => self.log(format!("sensor {source}")),
                 Event::ViewManifest(_) => {}
+                // HUD slots are on-device chrome; the TUI has its own panels
+                // and doesn't render the band. Ignore rather than log-spam.
+                Event::Widget(_) => {}
             },
             Body::Command(_) => {}
         }

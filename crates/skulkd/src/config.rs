@@ -18,6 +18,9 @@ pub struct Config {
     pub heartbeat_secs: u64,
     /// On-device LCD, if any (the `lcd` feature). Empty `driver` means none.
     pub display: DisplaySection,
+    /// On-device HUD/status band: which module-published slots show, and in
+    /// what order. Empty (the default) means no band.
+    pub hud: HudSection,
     /// Physical buttons/indicators/encoders wired to the device, surfaced in
     /// the `Manifest` and consulted by the LCD's navigation.
     pub peripherals: Vec<PeripheralConfig>,
@@ -37,6 +40,7 @@ impl Default for Config {
             log: "info".to_string(),
             heartbeat_secs: 30,
             display: DisplaySection::default(),
+            hud: HudSection::default(),
             peripherals: Vec::new(),
         }
     }
@@ -132,6 +136,10 @@ pub struct DisplaySection {
     /// including the Waveshare 1.44" LCD HAT / ST7735S, need BGR or colors
     /// come out swapped.
     pub bgr: bool,
+    /// Path to a theme directory (a `theme.toml` plus `.bmp` assets). Empty
+    /// means the built-in default theme: monochrome palette, no icons. The
+    /// theme supplies the palette, the HUD slot icons, and a fallback nav map.
+    pub theme: String,
 }
 
 impl Default for DisplaySection {
@@ -151,8 +159,20 @@ impl Default for DisplaySection {
             rst_gpio: 0,
             bl_gpio: 0,
             bgr: false,
+            theme: String::new(),
         }
     }
+}
+
+/// The `[hud]` section: the on-device status band's composition.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HudSection {
+    /// Slot names to show, left to right, e.g. `["battery", "temp", "alert"]`.
+    /// A slot appears only once a module publishes a value for it; slots a
+    /// module emits but that aren't listed here are ignored (the band is
+    /// bounded on purpose). The theme maps each name to an icon.
+    pub slots: Vec<String>,
 }
 
 /// A `[[peripherals]]` entry: physical wiring, config-local (kept separate
@@ -224,6 +244,8 @@ mod tests {
         assert_eq!(cfg.loot.path, "skulk-loot.redb");
         assert_eq!(cfg.heartbeat_secs, 30);
         assert_eq!(cfg.display.driver, "", "no display by default");
+        assert_eq!(cfg.display.theme, "", "no theme by default");
+        assert!(cfg.hud.slots.is_empty(), "no HUD band by default");
         assert!(cfg.peripherals.is_empty());
         assert!(cfg.nav.is_empty());
     }
@@ -246,6 +268,10 @@ mod tests {
             rst_gpio = 27
             bl_gpio = 24
             bgr = true
+            theme = "/opt/skulk/themes/neon"
+
+            [hud]
+            slots = ["battery", "temp", "alert"]
 
             [[peripherals]]
             name = "btn_a"
@@ -271,6 +297,8 @@ mod tests {
         assert_eq!(cfg.display.interface, DisplayInterface::Spi);
         assert_eq!(cfg.display.bl_gpio, 24);
         assert!(cfg.display.bgr);
+        assert_eq!(cfg.display.theme, "/opt/skulk/themes/neon");
+        assert_eq!(cfg.hud.slots, vec!["battery", "temp", "alert"]);
 
         assert_eq!(cfg.peripherals.len(), 2);
         assert_eq!(cfg.peripherals[0].name, "btn_a");

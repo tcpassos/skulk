@@ -32,7 +32,10 @@ lcd-render    on-device LCD: in-process consumer of Engine::subscribe()
               run_app()/spawn_app() also drive a browsable on-device menu
               (built from the Manifest) toggled by physical buttons
               (InputSource/NavMap), invoking param-less actions straight
-              from the screen; NoInput is the zero-buttons fallback.     deps: engine, contract
+              from the screen; NoInput is the zero-buttons fallback.
+              A HUD band (Hud + draw_hud) composites small keyed indicators
+              any module publishes via ctx.widget (Event::Widget) over
+              whatever screen is active; the theme maps slot name -> icon.  deps: engine, contract
 crates/modules/*   attack/recon modules. e.g. example-sysinfo -> sys.info,
                    net-portscan -> net.ports, net-services -> net.services. deps: module-sdk, contract
 ```
@@ -191,13 +194,23 @@ there's nothing to browse (no peripherals configured -> `NoInput`, the loop
 behaves exactly like the view-only path). This resolves the "should the LCD
 navigate the Manifest or stay view-only" open question from Phase 5's design
 in favor of "navigate" — lives in `skulkd`, not a separate binary, since it
-owns the same SPI/GPIO bus exclusively anyway. **Still not live-tested on real
-hardware** — that's the immediate next step, on a Pi Zero 2 W + Waveshare
-1.14"/1.44" panel (`--features lcd`; see `[display]`/`[[peripherals]]`/`[nav]`
-in `skulk.toml`). No theme directory is loaded from disk at runtime yet either
-(the `theme.toml` parser in `lcd-render::theme` is implemented and tested, but
-`skulkd` always uses `Theme::default()` — wiring a configurable theme path is
-unstarted). Also still open: whether the TUI's own colors should move onto the
+owns the same SPI/GPIO bus exclusively anyway. A cross-screen **HUD band**
+(`hud::Hud` + `Renderer::draw_hud`/`draw_frame`) composites small keyed
+indicators any module publishes via `ctx.widget` (`Event::Widget` /
+`WidgetUpdate { slot, value, severity }`) over whatever screen is active; the
+operator lists which slots show in `[hud].slots`, and the **theme maps each
+slot name to a `.bmp` icon** (an `[assets]` entry keyed by the slot name),
+falling back to text when no theme/asset is present. A theme is now actually
+**loaded from disk** when `[display].theme` names a directory (`Theme::load`,
+fail-clean to `Theme::default()`), so themes drive the palette, HUD icons, and
+a fallback nav map — a runnable reference lives in `themes/example/theme.toml`.
+**Still not live-tested on real hardware** — that's the immediate next step, on
+a Pi Zero 2 W + Waveshare 1.14"/1.44" panel (`--features lcd`; see
+`[display]`/`[hud]`/`[[peripherals]]`/`[nav]` in `skulk.toml`). The next planned
+LCD feature is **typed input widgets** (button-driven spinners built from
+`ParamSpec.type_hint` — `host` → octet spinners, `int`/`port` → numeric
+stepper — so param-taking actions run from the device, not just param-less
+ones). Also still open: whether the TUI's own colors should move onto the
 same `lcd_render::Theme` system instead of `skulk-tui/src/ui.rs`'s hardcoded
 consts. Cross-compiling from the Windows dev machine via `cross` (Docker) is
 confirmed working end-to-end: the test Pi Zero 2 W runs Raspberry Pi OS

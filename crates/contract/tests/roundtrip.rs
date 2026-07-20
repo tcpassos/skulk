@@ -61,6 +61,32 @@ fn view_manifest_drives_dual_ui() {
 }
 
 #[test]
+fn widget_update_roundtrips() {
+    let env = Envelope::new(
+        Body::Event(Event::Widget(WidgetUpdate {
+            slot: "battery".into(),
+            value: "42%".into(),
+            severity: Some(Severity::Low),
+        })),
+        1_700_000_000_005,
+    );
+    assert_eq!(roundtrip(&env), env);
+
+    // An update with no severity must omit the field and still round-trip.
+    let plain = Envelope::new(
+        Body::Event(Event::Widget(WidgetUpdate {
+            slot: "temp".into(),
+            value: "51C".into(),
+            severity: None,
+        })),
+        1_700_000_000_006,
+    );
+    let s = serde_json::to_string(&plain).expect("serialize");
+    assert!(!s.contains("severity"), "None severity should be skipped on the wire");
+    assert_eq!(roundtrip(&plain), plain);
+}
+
+#[test]
 fn manifest_carries_capability_gating() {
     let manifest = Manifest {
         protocol: PROTOCOL_VERSION,

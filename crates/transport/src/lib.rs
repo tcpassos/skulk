@@ -48,7 +48,11 @@ fn now_ms() -> u64 {
 /// Egress policy: what is allowed to leave the device.
 fn egress_allows(config: &TransportConfig, env: &Envelope) -> bool {
     match &env.body {
-        Body::Event(Event::ViewManifest(_)) => config.forward_view_manifest,
+        // Both are on-device UI chrome (the tactical view and the HUD band);
+        // they stay on the device unless the operator opts to forward them.
+        Body::Event(Event::ViewManifest(_)) | Body::Event(Event::Widget(_)) => {
+            config.forward_view_manifest
+        }
         _ => true,
     }
 }

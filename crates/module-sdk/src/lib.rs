@@ -15,7 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use contract::{
     Event, LogLevel, LootKind, LootQuery, ModuleDescriptor, ModuleId, RawParams, Severity, TaskId,
-    ViewLine, ViewManifest,
+    ViewLine, ViewManifest, WidgetUpdate,
 };
 
 /// Re-exported so module authors can name it via `module_sdk::LootEntry`.
@@ -107,6 +107,21 @@ impl ModuleCtx {
         let _ = self
             .events
             .send(Event::ViewManifest(ViewManifest { screen: screen.into(), lines }));
+    }
+
+    /// Update one slot of the on-device HUD/status band. Unlike [`view`], this
+    /// is a small keyed indicator that persists across screen changes and
+    /// composites with other modules' slots — the theme maps `slot` to an
+    /// icon. An empty `value` clears the slot. Independent of whether this
+    /// module's tactical view is the one on screen.
+    ///
+    /// [`view`]: ModuleCtx::view
+    pub fn widget(&self, slot: impl Into<String>, value: impl Into<String>, severity: Option<Severity>) {
+        let _ = self.events.send(Event::Widget(WidgetUpdate {
+            slot: slot.into(),
+            value: value.into(),
+            severity,
+        }));
     }
 
     /// Persist a loot item. The engine emits the `LootStored` event for you and

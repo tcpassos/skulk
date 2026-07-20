@@ -77,7 +77,7 @@ async fn main() {
     engine.set_peripherals(config.peripherals.into_iter().map(Into::into).collect());
     let engine = Arc::new(engine);
 
-    spawn_lcd(&engine, &config.display, &config.nav);
+    spawn_lcd(&engine, &config.display, &config.hud, &config.nav);
 
     if config.heartbeat_secs > 0 {
         engine.spawn_heartbeat(Duration::from_secs(config.heartbeat_secs));
@@ -127,7 +127,12 @@ async fn main() {
 /// Never fatal: a missing/misconfigured screen logs and leaves the daemon
 /// running headless, the same "fail clean" stance as capability-gating.
 #[cfg(all(feature = "lcd", target_os = "linux"))]
-fn spawn_lcd(engine: &Arc<Engine>, disp: &config::DisplaySection, nav: &HashMap<String, String>) {
+fn spawn_lcd(
+    engine: &Arc<Engine>,
+    disp: &config::DisplaySection,
+    hud: &config::HudSection,
+    nav: &HashMap<String, String>,
+) {
     // Named `disp`, not `display`: `tracing`'s field macros treat a bare
     // `display` identifier specially (it's also their `%`-sigil helper fn),
     // and a same-named local shadows it in a way that fails to compile.
@@ -172,31 +177,54 @@ fn spawn_lcd(engine: &Arc<Engine>, disp: &config::DisplaySection, nav: &HashMap<
         bgr: disp.bgr,
     };
 
-    // No theme directory is loaded from disk yet (reserved -- see
-    // ROADMAP.md), so only the operator's own `[nav]` binds anything today;
-    // an unbound peripheral just does nothing on the LCD until either a
-    // theme provides a binding or the operator adds one.
+    // Load the theme (palette + HUD icons + fallback nav map) if configured;
+    // fall back to the built-in default (monochrome, no icons) otherwise. A
+    // theme's own `[nav]` is a lower-precedence layer under the operator's.
+    let theme = load_theme(&disp.theme);
+    let theme_nav = theme.nav.clone();
+    let renderer = lcd_render::Renderer::with_theme(theme);
     let manifest = engine.manifest();
     let input = build_input(&manifest.peripherals);
-    let nav_map = lcd_render::NavMap::new(nav, &HashMap::new());
+    let nav_map = lcd_render::NavMap::new(nav, &theme_nav);
+    let hud_slots = hud.slots.clone();
 
     match disp.chip.as_str() {
         "st7789" => match lcd_render::open_st7789(&mipidsi_config) {
             Ok(panel) => {
                 tracing::info!(width, height, chip = "st7789", "lcd: display ready");
-                lcd_render::spawn_app(engine.clone(), manifest, input, nav_map, panel);
+                lcd_render::spawn_app(renderer, engine.clone(), manifest, input, nav_map, hud_slots, panel);
             }
             Err(e) => tracing::error!("lcd: cannot open display: {e}"),
         },
         "st7735s" => match lcd_render::open_st7735s(&mipidsi_config) {
             Ok(panel) => {
                 tracing::info!(width, height, chip = "st7735s", "lcd: display ready");
-                lcd_render::spawn_app(engine.clone(), manifest, input, nav_map, panel);
+                lcd_render::spawn_app(renderer, engine.clone(), manifest, input, nav_map, hud_slots, panel);
             }
             Err(e) => tracing::error!("lcd: cannot open display: {e}"),
         },
         other => {
             tracing::warn!(chip = other, "lcd: unknown chip for driver 'mipidsi', display stays off");
+        }
+    }
+}
+
+/// Load the theme directory named in config, or the built-in default when the
+/// path is empty or fails to load — a bad theme must never keep the daemon
+/// from coming up headless, same fail-clean stance as the rest of `spawn_lcd`.
+#[cfg(all(feature = "lcd", target_os = "linux"))]
+fn load_theme(path: &str) -> lcd_render::Theme {
+    if path.is_empty() {
+        return lcd_render::Theme::default();
+    }
+    match lcd_render::Theme::load(path) {
+        Ok(theme) => {
+            tracing::info!(theme = path, "lcd: theme loaded");
+            theme
+        }
+        Err(e) => {
+            tracing::error!("lcd: cannot load theme '{path}': {e}; using default");
+            lcd_render::Theme::default()
         }
     }
 }
@@ -229,7 +257,13 @@ fn build_input(peripherals: &[contract::Peripheral]) -> Box<dyn lcd_render::Inpu
 }
 
 #[cfg(not(all(feature = "lcd", target_os = "linux")))]
-fn spawn_lcd(_engine: &Arc<Engine>, _display: &config::DisplaySection, _nav: &HashMap<String, String>) {}
+fn spawn_lcd(
+    _engine: &Arc<Engine>,
+    _display: &config::DisplaySection,
+    _hud: &config::HudSection,
+    _nav: &HashMap<String, String>,
+) {
+}
 
 /// Initialise structured logging to stderr. `RUST_LOG` overrides the config filter.
 fn init_tracing(filter: &str) {

@@ -326,4 +326,14 @@ name = "99x99""#;
         let theme = Theme::default();
         assert!(matches!(theme.asset_bytes("anything"), Err(ThemeError::NoDirectory)));
     }
+
+    #[test]
+    fn shipped_example_theme_loads() {
+        // Guards the reference theme committed at the repo root against
+        // format drift, the way skulkd guards its own shipped skulk.toml.
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../themes/example");
+        let theme = Theme::load(dir).expect("themes/example/theme.toml must load");
+        assert_eq!(theme.foreground, hex("#00ff9c").unwrap());
+        assert_eq!(theme.font.character_size, embedded_graphics::geometry::Size::new(6, 10));
+    }
 }

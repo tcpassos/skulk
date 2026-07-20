@@ -209,6 +209,11 @@ fn print_event(env: &Envelope) {
             Event::Heartbeat { seq } => println!("  ~ heartbeat {seq}"),
             Event::Sensor { source, .. } => println!("  . sensor {source}"),
             Event::ViewManifest(_) => {}
+            Event::Widget(w) => {
+                if !w.value.is_empty() {
+                    println!("  . [{}] {}", w.slot, w.value);
+                }
+            }
         },
     }
 }
