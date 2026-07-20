@@ -61,6 +61,31 @@ fn view_manifest_drives_dual_ui() {
 }
 
 #[test]
+fn param_spec_bounds_and_allowed_roundtrip() {
+    let numeric = ParamSpec::required("port", "port", "target port").with_range(1, 65535);
+    let s = serde_json::to_string(&numeric).expect("serialize");
+    let back: ParamSpec = serde_json::from_str(&s).expect("deserialize");
+    assert_eq!(back, numeric);
+    assert_eq!(back.min, Some(1));
+    assert_eq!(back.max, Some(65535));
+
+    let choice = ParamSpec::optional("mode", "enum", "scan mode").with_allowed(["connect", "syn"]);
+    let s = serde_json::to_string(&choice).expect("serialize");
+    let back: ParamSpec = serde_json::from_str(&s).expect("deserialize");
+    assert_eq!(back.allowed, vec!["connect", "syn"]);
+
+    // A plain spec omits all three new fields on the wire (backward compatible).
+    let plain = ParamSpec::required("target", "host", "IP or hostname");
+    let s = serde_json::to_string(&plain).expect("serialize");
+    assert!(!s.contains("min"), "unset numeric bounds must be skipped");
+    assert!(!s.contains("allowed"), "empty allowed must be skipped");
+    // And an old-protocol spec with none of the fields still deserializes.
+    let old = json!({ "name": "target", "required": true, "type_hint": "host" });
+    let back: ParamSpec = serde_json::from_value(old).expect("deserialize legacy spec");
+    assert!(back.min.is_none() && back.max.is_none() && back.allowed.is_empty());
+}
+
+#[test]
 fn widget_update_roundtrips() {
     let env = Envelope::new(
         Body::Event(Event::Widget(WidgetUpdate {

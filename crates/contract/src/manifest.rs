@@ -92,6 +92,18 @@ pub struct ParamSpec {
     pub default: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub example: Option<String>,
+    /// Inclusive bounds for a numeric parameter, so a UI (chiefly the
+    /// on-device LCD's button spinner) can clamp input. Ignored for
+    /// non-numeric types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<i64>,
+    /// A closed set of acceptable values, turning the parameter into a
+    /// choice/enum: a UI offers exactly these (the LCD as a scrollable
+    /// picker) instead of free entry. Empty means unconstrained.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
 }
 
 impl ParamSpec {
@@ -103,6 +115,9 @@ impl ParamSpec {
             description: Some(description.to_string()),
             default: None,
             example: None,
+            min: None,
+            max: None,
+            allowed: Vec::new(),
         }
     }
 
@@ -114,6 +129,9 @@ impl ParamSpec {
             description: Some(description.to_string()),
             default: None,
             example: None,
+            min: None,
+            max: None,
+            allowed: Vec::new(),
         }
     }
 
@@ -124,6 +142,23 @@ impl ParamSpec {
 
     pub fn with_example(mut self, example: &str) -> Self {
         self.example = Some(example.to_string());
+        self
+    }
+
+    /// Inclusive numeric bounds, for a UI to clamp input against.
+    pub fn with_range(mut self, min: i64, max: i64) -> Self {
+        self.min = Some(min);
+        self.max = Some(max);
+        self
+    }
+
+    /// A closed set of acceptable values (turns this into a choice/enum).
+    pub fn with_allowed<I, S>(mut self, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.allowed = values.into_iter().map(Into::into).collect();
         self
     }
 }

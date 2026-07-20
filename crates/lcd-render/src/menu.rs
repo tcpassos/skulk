@@ -3,8 +3,9 @@
 //! [`crate::NavMap`]; [`crate::Renderer::draw_menu`] does the pixel work,
 //! and [`App`] is the small state machine deciding which screen is active.
 
-use contract::{Command, Envelope, Invoke, Manifest, ModuleId, RawParams, ViewLine, ViewManifest};
+use contract::{Command, Envelope, Invoke, Manifest, ModuleId, ParamSpec, RawParams, ViewLine, ViewManifest};
 
+use crate::form::{Back, Form};
 use crate::input::NavAction;
 
 /// One row of the flattened, grouped module list — a scaled-down version of
@@ -16,11 +17,12 @@ pub enum Row {
     Module {
         id: ModuleId,
         action: String,
-        /// Whether Select can invoke this directly. An action with required
-        /// params has no way to collect them from 2-4 buttons — free-text
-        /// entry has no home on the LCD, so those rows are browsable but
-        /// not runnable here; use the TUI/CLI for them instead.
+        /// Whether Select can invoke this directly with no further input —
+        /// i.e. the action declares no required params.
         invokable: bool,
+        /// The action's declared params, so a params-taking row can build a
+        /// [`Form`] of spinner widgets on Select (see [`App::apply_nav`]).
+        params: Vec<ParamSpec>,
     },
 }
 
@@ -51,6 +53,7 @@ impl Menu {
                     id: md.id.clone(),
                     action: action.name.clone(),
                     invokable: !action.params.iter().any(|p| p.required),
+                    params: action.params.clone(),
                 });
             }
         }
@@ -92,7 +95,7 @@ impl Menu {
     /// `None` (does nothing) for group rows or actions that need params.
     pub fn activate(&self) -> Option<Command> {
         match self.rows.get(self.selected) {
-            Some(Row::Module { id, action, invokable: true }) => Some(Command::Invoke(Invoke {
+            Some(Row::Module { id, action, invokable: true, .. }) => Some(Command::Invoke(Invoke {
                 module: id.clone(),
                 action: action.clone(),
                 params: RawParams::default(),
@@ -101,9 +104,15 @@ impl Menu {
             _ => None,
         }
     }
+
+    /// The currently-selected module row (not a group header), if any — lets
+    /// the app read its params to build a [`Form`].
+    pub fn selected_row(&self) -> Option<&Row> {
+        self.rows.get(self.selected).filter(|r| matches!(r, Row::Module { .. }))
+    }
 }
 
-/// Which of the LCD's two screens is currently shown.
+/// Which of the LCD's screens is currently shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     /// The live tactical `ViewManifest` — the default, matches today's
@@ -111,19 +120,31 @@ pub enum Screen {
     Status,
     /// The browsable/invokable module menu.
     Menu,
+    /// The spinner form for a params-taking action selected from the menu.
+    Form,
 }
 
-/// Ties the menu, the latest tactical view, and physical input together:
-/// which screen is showing, and what one resolved [`NavAction`] does to it.
+/// What one resolved nav action did to an open [`Form`] — kept separate from
+/// mutating [`App`] so the form's borrow ends before the screen is changed.
+enum FormOutcome {
+    Stay,
+    Submit(Command),
+    CloseToMenu,
+}
+
+/// Ties the menu, an optional input form, the latest tactical view, and
+/// physical input together: which screen is showing, and what one resolved
+/// [`NavAction`] does to it.
 pub struct App {
     screen: Screen,
     menu: Menu,
+    form: Option<Form>,
     last_view: Option<ViewManifest>,
 }
 
 impl App {
     pub fn new(manifest: &Manifest) -> Self {
-        Self { screen: Screen::Status, menu: Menu::from_manifest(manifest), last_view: None }
+        Self { screen: Screen::Status, menu: Menu::from_manifest(manifest), form: None, last_view: None }
     }
 
     pub fn screen(&self) -> Screen {
@@ -132,6 +153,11 @@ impl App {
 
     pub fn menu(&self) -> &Menu {
         &self.menu
+    }
+
+    /// The open input form, if the current screen is [`Screen::Form`].
+    pub fn form(&self) -> Option<&Form> {
+        self.form.as_ref()
     }
 
     /// Fold in a live tactical update. Does not change which screen is
@@ -175,14 +201,65 @@ impl App {
                     None
                 }
                 NavAction::Select => {
-                    let cmd = self.menu.activate();
-                    if cmd.is_some() {
-                        // Switch back so the operator watches it run.
+                    // Param-less action: invoke it and switch to Status to
+                    // watch it run.
+                    if let Some(cmd) = self.menu.activate() {
                         self.screen = Screen::Status;
+                        return Some(cmd);
                     }
-                    cmd
+                    // Params-taking action: open a spinner form, but only if
+                    // every required param is spinner-fillable. A required
+                    // free-text param leaves the action browse-only (nothing
+                    // happens here — run it from the CLI/TUI instead).
+                    let form = self.menu.selected_row().and_then(|row| match row {
+                        Row::Module { id, action, params, .. } => {
+                            Form::for_action(id.clone(), action.clone(), params)
+                        }
+                        _ => None,
+                    });
+                    if let Some(form) = form {
+                        self.form = Some(form);
+                        self.screen = Screen::Form;
+                    }
+                    None
                 }
             },
+            Screen::Form => {
+                let outcome = match self.form.as_mut() {
+                    None => FormOutcome::CloseToMenu, // defensive: no form -> leave the screen
+                    Some(form) => match action {
+                        NavAction::Up => {
+                            form.up();
+                            FormOutcome::Stay
+                        }
+                        NavAction::Down => {
+                            form.down();
+                            FormOutcome::Stay
+                        }
+                        NavAction::Select => match form.select() {
+                            Some(cmd) => FormOutcome::Submit(cmd),
+                            None => FormOutcome::Stay,
+                        },
+                        NavAction::Back => match form.back() {
+                            Back::Stay => FormOutcome::Stay,
+                            Back::Cancel => FormOutcome::CloseToMenu,
+                        },
+                    },
+                };
+                match outcome {
+                    FormOutcome::Stay => None,
+                    FormOutcome::Submit(cmd) => {
+                        self.form = None;
+                        self.screen = Screen::Status; // watch it run
+                        Some(cmd)
+                    }
+                    FormOutcome::CloseToMenu => {
+                        self.form = None;
+                        self.screen = Screen::Menu;
+                        None
+                    }
+                }
+            }
         }
     }
 }
@@ -243,7 +320,7 @@ mod tests {
         let menu = Menu::from_manifest(&sample_manifest());
         assert!(matches!(&menu.rows()[0], Row::Group(g) if g == "net"));
         match &menu.rows()[1] {
-            Row::Module { id, action, invokable } => {
+            Row::Module { id, action, invokable, .. } => {
                 assert_eq!(*id, ModuleId::from("net.ports"));
                 assert_eq!(action, "scan");
                 assert!(!invokable, "scan requires a target param");
@@ -333,12 +410,78 @@ mod tests {
     }
 
     #[test]
-    fn selecting_a_params_required_row_stays_on_the_menu() {
+    fn selecting_a_spinnable_params_action_opens_a_form() {
         let mut app = App::new(&sample_manifest());
-        app.apply_nav(NavAction::Down); // open menu, selected on net.ports scan (needs target)
+        app.apply_nav(NavAction::Down); // open menu, selected on net.ports scan (needs a host target)
+        let cmd = app.apply_nav(NavAction::Select);
+        assert!(cmd.is_none(), "opening a form doesn't invoke yet");
+        assert_eq!(app.screen(), Screen::Form);
+        assert_eq!(app.form().unwrap().action(), "scan");
+    }
+
+    #[test]
+    fn filling_a_host_form_and_submitting_invokes_with_the_value() {
+        let mut app = App::new(&sample_manifest());
+        app.apply_nav(NavAction::Down); // open menu on net.ports scan
+        app.apply_nav(NavAction::Select); // open the form (host field, 4 octets)
+        // Select walks octet 0->1->2->3, then the final Select submits.
+        assert!(app.apply_nav(NavAction::Select).is_none());
+        assert!(app.apply_nav(NavAction::Select).is_none());
+        assert!(app.apply_nav(NavAction::Select).is_none());
+        let cmd = app.apply_nav(NavAction::Select).expect("final select submits");
+        match cmd {
+            Command::Invoke(inv) => {
+                assert_eq!(inv.module, ModuleId::from("net.ports"));
+                assert_eq!(inv.action, "scan");
+                // No example in the sample spec -> host seeds at 0.0.0.0.
+                assert_eq!(inv.params.0["target"], serde_json::json!("0.0.0.0"));
+            }
+            _ => panic!("expected an invoke"),
+        }
+        assert_eq!(app.screen(), Screen::Status, "after submit, watch it run");
+        assert!(app.form().is_none());
+    }
+
+    #[test]
+    fn cancelling_a_form_returns_to_the_menu() {
+        let mut app = App::new(&sample_manifest());
+        app.apply_nav(NavAction::Down); // menu on net.ports scan
+        app.apply_nav(NavAction::Select); // open form
+        assert_eq!(app.screen(), Screen::Form);
+        // Back retreats through the 4 octets (starts at octet 0), so a single
+        // Back from the fresh form's first octet cancels straight away.
+        app.apply_nav(NavAction::Back);
+        assert_eq!(app.screen(), Screen::Menu, "back from the first edit point returns to the menu");
+        assert!(app.form().is_none());
+    }
+
+    #[test]
+    fn selecting_a_free_text_required_action_stays_on_the_menu() {
+        // A required free-text param can't be spun -> the action is
+        // browse-only on the device; Select does nothing.
+        let manifest = Manifest {
+            protocol: 1,
+            implant: contract::ImplantInfo { id: "t".into(), hardware: "t".into(), firmware: "0".into() },
+            modules: vec![ModuleDescriptor {
+                id: ModuleId::from("sys.note"),
+                version: "0".into(),
+                tactic: None,
+                actions: vec![ActionSpec {
+                    name: "write".into(),
+                    description: None,
+                    params: vec![ParamSpec::required("text", "string", "free text")],
+                    params_schema: None,
+                }],
+                requires: vec![],
+            }],
+            capabilities: vec![],
+            peripherals: vec![],
+        };
+        let mut app = App::new(&manifest);
+        app.apply_nav(NavAction::Down); // open menu on sys.note write
         let cmd = app.apply_nav(NavAction::Select);
         assert!(cmd.is_none());
-        assert_eq!(app.screen(), Screen::Menu, "nothing to run -- stay put");
+        assert_eq!(app.screen(), Screen::Menu, "browse-only action: Select is a no-op");
     }
 
     #[test]

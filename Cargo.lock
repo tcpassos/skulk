@@ -939,6 +939,7 @@ dependencies = [
  "mipidsi",
  "rppal",
  "serde",
+ "serde_json",
  "tinybmp",
  "tokio",
  "toml",

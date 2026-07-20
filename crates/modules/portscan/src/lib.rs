@@ -63,7 +63,8 @@ impl ImplantModule for PortScan {
                 name: "scan".to_string(),
                 description: Some("Unprivileged TCP connect scan of a target".to_string()),
                 params: vec![
-                    ParamSpec::required("target", "host", "IP or hostname to scan"),
+                    ParamSpec::required("target", "host", "IP or hostname to scan")
+                        .with_example("192.168.0.1"),
                     ParamSpec::optional("ports", "port-spec", "range/list, e.g. 1-1024 or 22,80,443")
                         .with_default("common ports")
                         .with_example("1-1024"),

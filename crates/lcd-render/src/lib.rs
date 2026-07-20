@@ -6,6 +6,7 @@
 
 mod driver_gpio_buttons;
 mod driver_mipidsi;
+mod form;
 mod hud;
 mod input;
 mod menu;
@@ -17,6 +18,7 @@ pub use driver_mipidsi::{
 };
 #[cfg(all(target_os = "linux", feature = "input-gpio"))]
 pub use driver_gpio_buttons::{ButtonConfig, GpioButtons};
+pub use form::{Field, Form, Widget};
 pub use hud::{Hud, Slot};
 pub use input::{InputEvent, InputSource, NavAction, NavMap};
 pub use menu::{App, Menu, Row, Screen};
@@ -133,9 +135,18 @@ impl Renderer {
             }
             let text = match row {
                 Row::Group(name) => format!("{name}/"),
-                Row::Module { id, action, invokable } => {
+                Row::Module { id, action, invokable, params } => {
                     let name = id.0.split_once('.').map(|(_, n)| n).unwrap_or(&id.0);
-                    let marker = if *invokable { "" } else { " *" };
+                    // Marker tells the operator what Select will do: nothing =
+                    // runs immediately; "+" = opens a spinner form; "-" =
+                    // browse-only (a required free-text param it can't spin).
+                    let marker = if *invokable {
+                        ""
+                    } else if params.iter().filter(|p| p.required).all(|p| Widget::for_param(p).is_some()) {
+                        " +"
+                    } else {
+                        " -"
+                    };
                     format!(" {name} {action}{marker}")
                 }
             };
@@ -145,7 +156,40 @@ impl Renderer {
         Ok(())
     }
 
-    /// Draw whichever of the two screens `app` currently has active.
+    /// Draw the spinner input form: a header, then one row per field showing
+    /// its name and current value; the field being edited is highlighted.
+    pub fn draw_form<D>(&self, target: &mut D, form: &Form) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        target.clear(self.theme.background)?;
+
+        let bounds = target.bounding_box();
+        let font = pick_font(Some(self.theme.font), bounds.size.height, form.fields().len() as u32 + 1);
+        let header_style = MonoTextStyle::new(font, self.theme.foreground);
+        let selected_style = MonoTextStyleBuilder::new()
+            .font(font)
+            .text_color(self.theme.background)
+            .background_color(self.theme.foreground)
+            .build();
+        let line_height = (font.character_size.height + font.character_spacing) as i32;
+
+        let mut y = font.character_size.height as i32;
+        Text::new(form.action(), Point::new(0, y), header_style).draw(target)?;
+
+        for (i, field) in form.fields().iter().enumerate() {
+            y += line_height;
+            if y > bounds.size.height as i32 {
+                break;
+            }
+            let text = format!("{}: {}", field.name, field.widget.display());
+            let style = if i == form.cursor() { selected_style } else { MonoTextStyle::new(font, self.theme.foreground) };
+            Text::new(&text, Point::new(0, y), style).draw(target)?;
+        }
+        Ok(())
+    }
+
+    /// Draw whichever screen `app` currently has active.
     pub fn draw_app<D>(&self, target: &mut D, app: &App) -> Result<(), D::Error>
     where
         D: DrawTarget<Color = Rgb565>,
@@ -153,6 +197,10 @@ impl Renderer {
         match app.screen() {
             Screen::Status => self.draw(target, &app.status_view()),
             Screen::Menu => self.draw_menu(target, app.menu()),
+            Screen::Form => match app.form() {
+                Some(form) => self.draw_form(target, form),
+                None => self.draw_menu(target, app.menu()), // defensive: no form -> show menu
+            },
         }
     }
 

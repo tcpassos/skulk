@@ -35,7 +35,11 @@ lcd-render    on-device LCD: in-process consumer of Engine::subscribe()
               from the screen; NoInput is the zero-buttons fallback.
               A HUD band (Hud + draw_hud) composites small keyed indicators
               any module publishes via ctx.widget (Event::Widget) over
-              whatever screen is active; the theme maps slot name -> icon.  deps: engine, contract
+              whatever screen is active; the theme maps slot name -> icon.
+              Params-taking actions open a button-driven spinner Form
+              (form::{Widget,Form}) built from ParamSpec type_hints
+              (host->octets, int/port->stepper, port-spec->range, bool,
+              enum/allowed->picker); free-text params stay browse-only.    deps: engine, contract
 crates/modules/*   attack/recon modules. e.g. example-sysinfo -> sys.info,
                    net-portscan -> net.ports, net-services -> net.services. deps: module-sdk, contract
 ```
@@ -204,13 +208,21 @@ falling back to text when no theme/asset is present. A theme is now actually
 **loaded from disk** when `[display].theme` names a directory (`Theme::load`,
 fail-clean to `Theme::default()`), so themes drive the palette, HUD icons, and
 a fallback nav map — a runnable reference lives in `themes/example/theme.toml`.
-**Still not live-tested on real hardware** — that's the immediate next step, on
-a Pi Zero 2 W + Waveshare 1.14"/1.44" panel (`--features lcd`; see
-`[display]`/`[hud]`/`[[peripherals]]`/`[nav]` in `skulk.toml`). The next planned
-LCD feature is **typed input widgets** (button-driven spinners built from
-`ParamSpec.type_hint` — `host` → octet spinners, `int`/`port` → numeric
-stepper — so param-taking actions run from the device, not just param-less
-ones). Also still open: whether the TUI's own colors should move onto the
+Params-taking actions are now runnable from the device too: Select on a
+menu row whose required params are all spinner-fillable opens a **typed input
+form** (`form::{Widget, Field, Form}`, `Screen::Form`) — a wizard of
+button-driven spinners built from each `ParamSpec` (`host` → four octet
+spinners, `int`/`port` → bounded stepper, `port-spec` → start/end range,
+`bool` → toggle, `allowed`/`enum` → scrollable picker), folded onto the same
+four nav actions (Up/Down edit, Select advances/submits, Back retreats/
+cancels). An action with a *required free-text* param (`string`/`mac`) stays
+browse-only (menu marker `-`; `+` marks form-able, none marks run-now).
+`ParamSpec` gained optional `min`/`max`/`allowed` (serde-default,
+back-compatible) to drive the spinners. **Still not live-tested on real
+hardware** — that's the immediate next step, on a Pi Zero 2 W + Waveshare
+1.14"/1.44" panel (`--features lcd`; see
+`[display]`/`[hud]`/`[[peripherals]]`/`[nav]` in `skulk.toml`). Also still
+open: whether the TUI's own colors should move onto the
 same `lcd_render::Theme` system instead of `skulk-tui/src/ui.rs`'s hardcoded
 consts. Cross-compiling from the Windows dev machine via `cross` (Docker) is
 confirmed working end-to-end: the test Pi Zero 2 W runs Raspberry Pi OS

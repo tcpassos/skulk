@@ -64,7 +64,7 @@ impl ImplantModule for Services {
                     "Identify service + version on open ports (banner / HTTP probe)".to_string(),
                 ),
                 params: vec![
-                    ParamSpec::required("target", "host", "IP or hostname"),
+                    ParamSpec::required("target", "host", "IP or hostname").with_example("192.168.0.1"),
                     ParamSpec::optional("ports", "port-spec", "ports to probe, e.g. 22,80,443")
                         .with_default("common service ports")
                         .with_example("1-1024"),
