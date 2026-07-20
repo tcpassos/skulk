@@ -68,14 +68,19 @@ impl Widget {
         }
     }
 
-    /// Step the current edit point up.
+    /// Step the current edit point up, wrapping to the minimum past the
+    /// maximum — dialling in a value near the top of a wide range (e.g. a
+    /// port just under 65535) shouldn't require holding Down instead just to
+    /// avoid overshooting from the other end.
     pub fn up(&mut self) {
         match self {
-            Widget::Octets { octets, cursor } => octets[*cursor] = octets[*cursor].saturating_add(1),
-            Widget::Number { value, min, max } => *value = clamp(*value + 1, *min, *max),
+            Widget::Octets { octets, cursor } => {
+                octets[*cursor] = if octets[*cursor] == u8::MAX { 0 } else { octets[*cursor] + 1 };
+            }
+            Widget::Number { value, min, max } => *value = if *value >= *max { *min } else { *value + 1 },
             Widget::Range { start, end, min, max, on_end } => {
                 let v = if *on_end { end } else { start };
-                *v = clamp(*v + 1, *min, *max);
+                *v = if *v >= *max { *min } else { *v + 1 };
             }
             Widget::Toggle(b) => *b = !*b,
             Widget::Choice { options, index } => {
@@ -86,14 +91,17 @@ impl Widget {
         }
     }
 
-    /// Step the current edit point down.
+    /// Step the current edit point down, wrapping to the maximum past the
+    /// minimum (the mirror of [`Widget::up`]).
     pub fn down(&mut self) {
         match self {
-            Widget::Octets { octets, cursor } => octets[*cursor] = octets[*cursor].saturating_sub(1),
-            Widget::Number { value, min, max } => *value = clamp(*value - 1, *min, *max),
+            Widget::Octets { octets, cursor } => {
+                octets[*cursor] = if octets[*cursor] == 0 { u8::MAX } else { octets[*cursor] - 1 };
+            }
+            Widget::Number { value, min, max } => *value = if *value <= *min { *max } else { *value - 1 },
             Widget::Range { start, end, min, max, on_end } => {
                 let v = if *on_end { end } else { start };
-                *v = clamp(*v - 1, *min, *max);
+                *v = if *v <= *min { *max } else { *v - 1 };
             }
             Widget::Toggle(b) => *b = !*b,
             Widget::Choice { options, index } => {
@@ -377,13 +385,30 @@ mod tests {
     }
 
     #[test]
-    fn number_widget_clamps_to_bounds() {
+    fn number_widget_wraps_past_either_bound() {
         let spec = ParamSpec::required("port", "port", "p"); // default port range 1..65535
         let mut w = Widget::for_param(&spec).unwrap();
-        // seeds at min (1); down must not go below min.
+        // seeds at min (1); down wraps straight to max instead of sticking.
         assert_eq!(w.value(), Value::Number(1.into()));
         w.down();
-        assert_eq!(w.value(), Value::Number(1.into()), "clamped at min");
+        assert_eq!(w.value(), Value::Number(65535.into()), "wraps to max");
+        w.up();
+        assert_eq!(w.value(), Value::Number(1.into()), "wraps back to min");
+    }
+
+    #[test]
+    fn octet_wraps_past_either_bound() {
+        let mut w = Widget::for_param(&host_param()).unwrap(); // seeds 10.0.0.1
+        w.down(); // first octet 10 -> 9, nowhere near a bound yet
+        assert_eq!(w.value(), Value::String("9.0.0.1".into()));
+        for _ in 0..9 {
+            w.down(); // walk the first octet down to 0
+        }
+        assert_eq!(w.value(), Value::String("0.0.0.1".into()));
+        w.down(); // 0 wraps to 255
+        assert_eq!(w.value(), Value::String("255.0.0.1".into()));
+        w.up(); // 255 wraps back to 0
+        assert_eq!(w.value(), Value::String("0.0.0.1".into()));
     }
 
     #[test]

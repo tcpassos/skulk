@@ -55,6 +55,16 @@ impl NavAction {
             _ => None,
         }
     }
+
+    /// Whether holding the button down should auto-repeat this action
+    /// (accelerating) instead of firing once per press. True only for the
+    /// two actions that step a bounded value one unit at a time — dialling a
+    /// large number (e.g. a port past 6000) one press per unit is
+    /// impractical. Left/Right/Select/Back move a cursor or commit/cancel;
+    /// repeating those doesn't help and risks overshooting.
+    pub fn repeats(self) -> bool {
+        matches!(self, Self::Up | Self::Down)
+    }
 }
 
 /// Resolves a wired peripheral's name (e.g. `"btn_a"`) to a [`NavAction`].
@@ -109,6 +119,16 @@ mod tests {
     fn falls_back_to_theme_when_operator_has_no_binding() {
         let nav = NavMap::new(&map(&[]), &map(&[("btn_b", "select")]));
         assert_eq!(nav.resolve("btn_b"), Some(NavAction::Select));
+    }
+
+    #[test]
+    fn only_up_and_down_auto_repeat() {
+        assert!(NavAction::Up.repeats());
+        assert!(NavAction::Down.repeats());
+        assert!(!NavAction::Left.repeats());
+        assert!(!NavAction::Right.repeats());
+        assert!(!NavAction::Select.repeats());
+        assert!(!NavAction::Back.repeats());
     }
 
     #[test]

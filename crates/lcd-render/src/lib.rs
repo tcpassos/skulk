@@ -354,14 +354,53 @@ impl InputSource for NoInput {
     }
 }
 
+/// A currently-held auto-repeating button: which peripheral (so its matching
+/// `Released` ends the hold), which action to keep re-applying, and when the
+/// next tick fires. See [`REPEAT_INITIAL_DELAY`] for the acceleration curve.
+struct HeldButton {
+    peripheral: String,
+    action: NavAction,
+    next_fire: tokio::time::Instant,
+    interval: std::time::Duration,
+}
+
+/// Pause after the initial press before auto-repeat kicks in, so a normal
+/// tap never repeats.
+const REPEAT_INITIAL_DELAY: std::time::Duration = std::time::Duration::from_millis(450);
+/// Repeat interval right when auto-repeat starts.
+const REPEAT_START_INTERVAL: std::time::Duration = std::time::Duration::from_millis(160);
+/// Repeat interval never gets faster than this floor.
+const REPEAT_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+/// How much faster each successive tick gets, until the floor above.
+const REPEAT_ACCEL_STEP: std::time::Duration = std::time::Duration::from_millis(12);
+
+impl HeldButton {
+    fn new(peripheral: String, action: NavAction) -> Self {
+        Self {
+            peripheral,
+            action,
+            next_fire: tokio::time::Instant::now() + REPEAT_INITIAL_DELAY,
+            interval: REPEAT_START_INTERVAL,
+        }
+    }
+
+    /// Schedule the next tick, a little faster than this one (floored).
+    fn tick(&mut self) {
+        self.next_fire = tokio::time::Instant::now() + self.interval;
+        self.interval = self.interval.saturating_sub(REPEAT_ACCEL_STEP).max(REPEAT_MIN_INTERVAL);
+    }
+}
+
 /// Runs the full on-device experience: the tactical `ViewManifest` (as
 /// [`run`] already does) plus a browsable/invokable menu built from
 /// `manifest` and a composited HUD band of `hud_slots`, toggled by `input`
 /// events resolved through `nav`. Takes `engine` itself, not just its bus --
 /// activating a menu row sends a `Command::Invoke` back into it, the one
 /// place this crate reaches beyond "draw what the bus already published".
-/// `renderer` carries the theme (so `hud_slots`' icons resolve). Returns once
-/// both the bus and `input` are exhausted (engine shutdown).
+/// `renderer` carries the theme (so `hud_slots`' icons resolve). Holding an
+/// auto-repeating action's button (see [`NavAction::repeats`]) re-applies it
+/// on an accelerating timer until the matching `Released` arrives. Returns
+/// once both the bus and `input` are exhausted (engine shutdown).
 pub async fn run_app<D>(
     renderer: Renderer,
     engine: Arc<Engine>,
@@ -377,6 +416,8 @@ pub async fn run_app<D>(
     let mut hud = Hud::new(hud_slots.clone());
     let icons = renderer.load_hud_icons(&hud_slots);
     let mut rx = engine.subscribe();
+    // The button currently auto-repeating (Up/Down held down), if any.
+    let mut held: Option<HeldButton> = None;
 
     // One place that turns current state into pixels, so every wake-up path
     // (view update, HUD update, input) redraws identically.
@@ -423,6 +464,13 @@ pub async fn run_app<D>(
                                     engine.handle(menu::envelope(cmd)).await;
                                 }
                                 draw(&mut target, &app, &hud);
+                                // Only a repeating action starts/replaces the
+                                // hold -- a one-shot press (e.g. Select) on a
+                                // different button shouldn't cancel whichever
+                                // Up/Down is still physically held.
+                                if action.repeats() {
+                                    held = Some(HeldButton::new(peripheral, action));
+                                }
                             }
                             None => tracing::info!(
                                 peripheral,
@@ -430,9 +478,26 @@ pub async fn run_app<D>(
                             ),
                         }
                     }
-                    Some(_) => {} // Released/Rotated: no menu behaviour defined yet
+                    Some(InputEvent::Released(peripheral)) => {
+                        if held.as_ref().is_some_and(|h| h.peripheral == peripheral) {
+                            held = None;
+                        }
+                    }
+                    Some(InputEvent::Rotated(..)) => {} // no menu behaviour defined yet
                     None => break, // the input source is permanently exhausted
                 }
+            }
+            // Re-fires the held button's action on an accelerating timer.
+            // Skipped entirely (not even polled) while nothing is held.
+            _ = tokio::time::sleep_until(
+                held.as_ref().map_or_else(tokio::time::Instant::now, |h| h.next_fire)
+            ), if held.is_some() => {
+                let h = held.as_mut().expect("guarded by held.is_some() above");
+                if let Some(cmd) = app.apply_nav(h.action) {
+                    engine.handle(menu::envelope(cmd)).await;
+                }
+                draw(&mut target, &app, &hud);
+                h.tick();
             }
         }
     }
@@ -605,6 +670,21 @@ mod tests {
             }
         };
         assert_eq!(result.status, contract::TaskStatus::Ok);
+    }
+
+    #[test]
+    fn held_button_accelerates_down_to_a_floor_and_no_further() {
+        let mut h = HeldButton::new("btn_up".into(), NavAction::Up);
+        assert_eq!(h.interval, REPEAT_START_INTERVAL);
+
+        h.tick();
+        assert_eq!(h.interval, REPEAT_START_INTERVAL - REPEAT_ACCEL_STEP, "speeds up by one step per tick");
+
+        // Enough ticks to run well past the floor, given start/floor/step above.
+        for _ in 0..50 {
+            h.tick();
+        }
+        assert_eq!(h.interval, REPEAT_MIN_INTERVAL, "never accelerates past the floor");
     }
 
     fn tiny_manifest() -> Manifest {
